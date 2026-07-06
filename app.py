@@ -10,8 +10,38 @@ from supabase import create_client, Client
 # ================= CONFIGURAÇÃO DA PÁGINA =================
 st.set_page_config(page_title="VISION PRO V3", page_icon="🎯", layout="centered")
 
+# Injeção de Design Moderno e Premium (CSS Customizado)
+st.markdown("""
+    <style>
+        /* Estilização Geral do Fundo e Textos */
+        .main { background-color: #0e1117; }
+        h1, h2, h3 { color: #00ffcc !important; font-family: 'Helvetica Neue', sans-serif; font-weight: 700; }
+        
+        /* Cartões Estilo Glassmorphism */
+        div.stButton > button {
+            background: linear-gradient(135deg, #00ffcc 0%, #0099ff 100%) !important;
+            color: #0e1117 !important;
+            font-weight: bold !important;
+            border: none !important;
+            border-radius: 8px !important;
+            padding: 10px 24px !important;
+            transition: all 0.3s ease !important;
+            box-shadow: 0 4px 15px rgba(0, 255, 204, 0.2) !important;
+        }
+        div.stButton > button:hover {
+            transform: translateY(-2px) !important;
+            box-shadow: 0 6px 20px rgba(0, 255, 204, 0.4) !important;
+        }
+        
+        /* Estilização da Sidebar */
+        [data-testid="stSidebar"] {
+            background-color: #161b22 !important;
+            border-right: 1px solid #21262d;
+        }
+    </style>
+""", unsafe_allow_html=True)
+
 # ================= CONEXÃO SUPABASE =================
-# O Streamlit vai puxar essas credenciais de forma segura através dos Secrets
 SUPABASE_URL = st.secrets["SUPABASE_URL"]
 SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
@@ -149,7 +179,7 @@ def bot_background_loop():
                 data = get_data_v2(ticker, st.session_state["TIMEFRAME"])
                 if not data: continue
 
-                sinal = analisar_estrategia(data, "MHI1") # Simplificado para teste estável
+                sinal = analisar_estrategia(data, "MHI1")
                 if sinal:
                     h_ent = datetime.now(FUSO).strftime('%H:%M')
                     h_exp = (datetime.now(FUSO) + timedelta(minutes=st.session_state["TIMEFRAME"])).strftime('%H:%M')
@@ -167,21 +197,30 @@ if "THREAD_STARTED" not in st.session_state:
     threading.Thread(target=bot_background_loop, daemon=True).start()
     st.session_state["THREAD_STARTED"] = True
 
+# ================= SIDEBAR GLOBAL (SUPORTE E LINK) =================
+with st.sidebar:
+    st.markdown("### 🎯 VISION NETWORKS")
+    st.markdown("---")
+    st.markdown("💬 **Precisa de Ajuda?**")
+    # Link direto para o suporte
+    st.link_button("➡️ Falar com Suporte", "https://t.me/seu_usuario_suporte", use_container_width=True)
+    st.markdown("---")
+    st.caption("Versão Pro V3.1 © 2026")
+
 # ================= INTERFACE GRÁFICA (STREAMLIT UI) =================
 if st.session_state["USER"] is None:
-    aba1, aba2 = st.tabs(["🔒 Login", "📝 Cadastro"])
+    st.title("🎯 VISION PRO V3")
+    aba1, aba2 = st.tabs(["🔒 Acessar Minha Conta", "📝 Criar Nova Conta"])
 
     with aba1:
-        st.subheader("Login Vision Pro")
-        email_input = st.text_input("E-mail")
-        senha_input = st.text_input("Senha", type="password")
-        if st.button("Entrar"):
-            # ASSINATURA DE ADM COMPORTAMENTO MASTER (Bypass direto)
+        st.subheader("Login Inteligente")
+        email_input = st.text_input("E-mail", key="login_email_input")
+        senha_input = st.text_input("Senha", type="password", key="login_senha_input")
+        if st.button("Entrar", key="btn_login_submit"):
             if email_input == ADMIN_EMAIL and senha_input == "admin123":
                 st.session_state["USER"] = email_input
                 st.rerun()
             else:
-                # Comportamento padrão para clientes normais (busca no Supabase)
                 user = db_carregar_usuario(email_input)
                 if user and user["senha"] == senha_input:
                     st.session_state["USER"] = email_input
@@ -190,32 +229,39 @@ if st.session_state["USER"] is None:
                     st.error("Credenciais inválidas ou assinatura expirada.")
 
     with aba2:
-        st.subheader("Criar Nova Conta")
-        novo_email = st.text_input("Novo E-mail")
-        nova_senha = st.text_input("Nova Senha", type="password")
-        if st.button("Cadastrar"):
-            if db_salvar_usuario(novo_email, nova_senha, "127.0.0.1"):
-                st.success("Cadastro realizado com sucesso! Faça login.")
+        st.subheader("Cadastro Instantâneo")
+        novo_email = st.text_input("Defina seu E-mail", key="register_email_input")
+        nova_senha = st.text_input("Defina uma Senha", type="password", key="register_senha_input")
+        if st.button("Finalizar Cadastro", key="btn_register_submit"):
+            if novo_email and nova_senha:
+                if db_salvar_usuario(novo_email, nova_senha, "127.0.0.1"):
+                    st.success("Sua conta foi criada com sucesso! Mude para a aba de Login.")
+                else:
+                    st.error("Este e-mail já está em uso ou ocorreu um erro no servidor.")
             else:
-                st.error("Erro ao cadastrar ou usuário já existente.")
+                st.warning("Por favor, preencha todos os campos vazios.")
 else:
     # Cabeçalho do App Autenticado
-    st.title("🛡️ VISION PRO V3")
-    st.write(f"Conectado como: `{st.session_state['USER']}`")
-    if st.button("Sair da Conta", type="primary"):
-        st.session_state["USER"] = None
-        st.rerun()
+    st.title("🛡️ DASHBOARD VISION PRO")
+    
+    col_user, col_logout = st.columns([3, 1])
+    with col_user:
+        st.write(f"Usuário Ativo: `{st.session_state['USER']}`")
+    with col_logout:
+        if st.button("Sair do Sistema", type="primary", use_container_width=True, key="btn_logout"):
+            st.session_state["USER"] = None
+            st.rerun()
 
     st.markdown("---")
 
     # Área do Painel de Controle e Monitoramento
     col1, col2 = st.columns(2)
     with col1:
-        if st.button("🚀 INICIAR SCANNER", use_container_width=True):
+        if st.button("🚀 INICIAR SCANNER ANALÍTICO", use_container_width=True, key="btn_start_scan"):
             st.session_state["BOT_ATIVO"] = True
             st.session_state["SINAL_DISPLAY"] = "📡 Procurando oportunidades nos mercados..."
     with col2:
-        if st.button("🛑 PARAR SCANNER", use_container_width=True):
+        if st.button("🛑 PARAR SCANNER", use_container_width=True, key="btn_stop_scan"):
             st.session_state["BOT_ATIVO"] = False
             st.session_state["SINAL_DISPLAY"] = "Scanner Pausado."
 
@@ -226,17 +272,17 @@ else:
     if st.session_state["AG_RESULTADO"]:
         st.warning("Aguardando verificação do resultado da operação:")
         c1, c2, c3 = st.columns(3)
-        if c1.button("✅ WIN", use_container_width=True):
+        if c1.button("✅ WIN", use_container_width=True, key="btn_win"):
             db_atualizar_ultimo_sinal("Win")
             db_atualizar_estatisticas(st.session_state["USER"], True)
             st.session_state["AG_RESULTADO"] = False
             st.rerun()
-        if c2.button("🔄 GALE 1", use_container_width=True):
+        if c2.button("🔄 GALE 1", use_container_width=True, key="btn_gale"):
             db_atualizar_ultimo_sinal("Win G1")
             db_atualizar_estatisticas(st.session_state["USER"], True)
             st.session_state["AG_RESULTADO"] = False
             st.rerun()
-        if c3.button("❌ RED", use_container_width=True):
+        if c3.button("❌ RED", use_container_width=True, key="btn_red"):
             db_atualizar_ultimo_sinal("Red")
             db_atualizar_estatisticas(st.session_state["USER"], False)
             st.session_state["AG_RESULTADO"] = False
@@ -244,8 +290,8 @@ else:
 
     # Filtros de Configuração de Estratégias
     with st.expander("⚙️ Configurações de Ativos e Filtros"):
-        st.session_state["MODO_MERCADO"] = st.radio("Mercado Alvo", ["TODOS", "FOREX", "CRIPTO"], index=0)
-        st.session_state["TIMEFRAME"] = st.selectbox("Timeframe (Minutos)", [1, 5, 15], index=1)
+        st.session_state["MODO_MERCADO"] = st.radio("Mercado Alvo", ["TODOS", "FOREX", "CRIPTO"], index=0, key="radio_mercado")
+        st.session_state["TIMEFRAME"] = st.selectbox("Timeframe (Minutos)", [1, 5, 15], index=1, key="select_tf")
 
     # Histórico de Operações vindo direto do Supabase
     st.subheader("📋 Histórico Recente de Sinais")
@@ -261,12 +307,11 @@ else:
         st.markdown("---")
         with st.expander("👥 PAINEL ADMINISTRATIVO (GESTÃO DE CLIENTES)"):
             st.write("Gerencie os acessos do banco de dados aqui.")
-            # Interface simplificada de exclusão/renovação via e-mail
-            alvo = st.text_input("E-mail do Cliente Alvo")
+            alvo = st.text_input("E-mail do Cliente Alvo", key="admin_target_user")
             cc1, cc2 = st.columns(2)
-            if cc1.button("Renovar +30 Dias"):
+            if cc1.button("Renovar +30 Dias", key="btn_renew_user"):
                 db_renovar_usuario(alvo)
                 st.success(f"{alvo} renovado!")
-            if cc2.button("Excluir Usuário", type="primary"):
+            if cc2.button("Excluir Usuário", type="primary", key="btn_delete_user"):
                 db_excluir_usuario(alvo)
                 st.error(f"{alvo} deletado do banco!")
