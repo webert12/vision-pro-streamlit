@@ -4,6 +4,7 @@ import time
 import threading
 import numpy as np
 import pytz
+import random
 from datetime import datetime, timedelta
 from supabase import create_client, Client
 
@@ -13,11 +14,9 @@ st.set_page_config(page_title="VISION PRO V3", page_icon="🎯", layout="centere
 # Injeção de Design Moderno e Premium (CSS Customizado)
 st.markdown("""
     <style>
-        /* Estilização Geral do Fundo e Textos */
         .main { background-color: #0e1117; }
         h1, h2, h3 { color: #00ffcc !important; font-family: 'Helvetica Neue', sans-serif; font-weight: 700; }
         
-        /* Cartões Estilo Glassmorphism */
         div.stButton > button {
             background: linear-gradient(135deg, #00ffcc 0%, #0099ff 100%) !important;
             color: #0e1117 !important;
@@ -33,10 +32,16 @@ st.markdown("""
             box-shadow: 0 6px 20px rgba(0, 255, 204, 0.4) !important;
         }
         
-        /* Estilização da Sidebar */
         [data-testid="stSidebar"] {
             background-color: #161b22 !important;
             border-right: 1px solid #21262d;
+        }
+        .scanner-box {
+            background: #1f2937;
+            padding: 15px;
+            border-radius: 10px;
+            border-left: 5px solid #00ffcc;
+            margin-bottom: 15px;
         }
     </style>
 """, unsafe_allow_html=True)
@@ -46,15 +51,16 @@ SUPABASE_URL = st.secrets["SUPABASE_URL"]
 SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-# ================= CONFIGURAÇÕES TELEGRAM =================
+# ================= CONFIGURAÇÕES TELEGRAM E SUPORTE =================
 TOKEN_TELEGRAM = "8710725826:AAFuGmF30Ns-G1glrBYir9ggVya9VwQgZAU"
 CHAT_ID_TELEGRAM = "-1002979466366"
 ADMIN_EMAIL = "admin@vision.com"
+WHATSAPP_SUPORTE = "5511999999999"  # Configure o seu número aqui (com DDI e DDD)
 
 def enviar_telegram(mensagem):
     try:
         url = f"https://api.telegram.org/bot{TOKEN_TELEGRAM}/sendMessage"
-        payload = {"chat_id": CHAT_ID_TELEGRAM, "text": mensagem, "parse_mode": "HTML"}
+        payload = {"chat_id": CHAT_ID_TELEGRAM, "text": message, "parse_mode": "HTML"}
         requests.post(url, json=payload, timeout=10)
     except Exception as e:
         print(f"Erro Telegram: {e}")
@@ -67,9 +73,10 @@ def db_carregar_usuario(email):
     except:
         return None
 
-def db_salvar_usuario(email, senha, ip):
+def db_salvar_usuario(email, senha, whatsapp, ip="127.0.0.1"):
     try:
-        supabase.table("usuarios").insert({"email": email, "senha": senha, "ip": ip}).execute()
+        # Nota: Certifique-se de que a coluna 'whatsapp' existe na tabela 'usuarios' do seu Supabase
+        supabase.table("usuarios").insert({"email": email, "senha": senha, "whatsapp": whatsapp, "ip": ip}).execute()
         return True
     except:
         return False
@@ -89,6 +96,13 @@ def db_renovar_usuario(email):
 
 def db_excluir_usuario(email):
     supabase.table("usuarios").delete().eq("email", email).execute()
+
+def db_atualizar_senha(email, nova_senha):
+    try:
+        supabase.table("usuarios").update({"senha": nova_senha}).eq("email", email).execute()
+        return True
+    except:
+        return False
 
 def db_verificar_assinatura(email):
     if email == ADMIN_EMAIL: return True, 999
@@ -167,6 +181,8 @@ if "TIMEFRAME" not in st.session_state: st.session_state["TIMEFRAME"] = 5
 if "ESTRATEGIA" not in st.session_state: st.session_state["ESTRATEGIA"] = "TODAS"
 if "SINAL_DISPLAY" not in st.session_state: st.session_state["SINAL_DISPLAY"] = "Aguardando Inicialização..."
 if "AG_RESULTADO" not in st.session_state: st.session_state["AG_RESULTADO"] = False
+if "ATIVO_ATUAL" not in st.session_state: st.session_state["ATIVO_ATUAL"] = "Nenhum"
+if "GRAFICO_DATA" not in st.session_state: st.session_state["GRAFICO_DATA"] = [0.0] * 20
 
 # ================= LOOP DE SEGUNDO PLANO =================
 def bot_background_loop():
@@ -175,9 +191,13 @@ def bot_background_loop():
         if st.session_state["BOT_ATIVO"] and not st.session_state["AG_RESULTADO"]:
             ativos = ATIVOS_BASE["FOREX"] + ATIVOS_BASE["CRIPTO"] if st.session_state["MODO_MERCADO"] == "TODOS" else ATIVOS_BASE[st.session_state["MODO_MERCADO"]]
             for ativo in ativos:
+                st.session_state["ATIVO_ATUAL"] = ativo
                 ticker = MAPA_TICKERS.get(ativo, ativo)
                 data = get_data_v2(ticker, st.session_state["TIMEFRAME"])
                 if not data: continue
+
+                # Atualiza dinamicamente o gráfico com os últimos fechamentos
+                st.session_state["GRAFICO_DATA"] = list(data["close"][-20:])
 
                 sinal = analisar_estrategia(data, "MHI1")
                 if sinal:
@@ -191,7 +211,8 @@ def bot_background_loop():
                     enviar_telegram(f"🎯 <b>SINAL CONFIRMADO</b>\n\n📈 Ativo: {ativo}\n🧭 Direção: {sinal}\n🕒 Time: M{st.session_state['TIMEFRAME']}")
                     st.session_state["AG_RESULTADO"] = True
                     break
-        time.sleep(10)
+                time.sleep(0.5)
+        time.sleep(2)
 
 if "THREAD_STARTED" not in st.session_state:
     threading.Thread(target=bot_background_loop, daemon=True).start()
@@ -202,21 +223,20 @@ with st.sidebar:
     st.markdown("### 🎯 VISION NETWORKS")
     st.markdown("---")
     st.markdown("💬 **Precisa de Ajuda?**")
-    # Link direto para o suporte
     st.link_button("➡️ Falar com Suporte", "https://t.me/seu_usuario_suporte", use_container_width=True)
     st.markdown("---")
-    st.caption("Versão Pro V3.1 © 2026")
+    st.caption("Versão Pro V3.5 Premium")
 
 # ================= INTERFACE GRÁFICA (STREAMLIT UI) =================
 if st.session_state["USER"] is None:
     st.title("🎯 VISION PRO V3")
-    aba1, aba2 = st.tabs(["🔒 Acessar Minha Conta", "📝 Criar Nova Conta"])
+    aba1, aba2 = st.tabs(["🔒 Acessar Painel", "🔑 Recuperar Acesso"])
 
     with aba1:
-        st.subheader("Login Inteligente")
+        st.subheader("Login Protegido")
         email_input = st.text_input("E-mail", key="login_email_input")
         senha_input = st.text_input("Senha", type="password", key="login_senha_input")
-        if st.button("Entrar", key="btn_login_submit"):
+        if st.button("Entrar no Sistema", key="btn_login_submit"):
             if email_input == ADMIN_EMAIL and senha_input == "admin123":
                 st.session_state["USER"] = email_input
                 st.rerun()
@@ -226,49 +246,67 @@ if st.session_state["USER"] is None:
                     st.session_state["USER"] = email_input
                     st.rerun()
                 else:
-                    st.error("Credenciais inválidas ou assinatura expirada.")
+                    st.error("Acesso negado. Entre em contato com o administrador.")
 
     with aba2:
-        st.subheader("Cadastro Instantâneo")
-        novo_email = st.text_input("Defina seu E-mail", key="register_email_input")
-        nova_senha = st.text_input("Defina uma Senha", type="password", key="register_senha_input")
-        if st.button("Finalizar Cadastro", key="btn_register_submit"):
-            if novo_email and nova_senha:
-                if db_salvar_usuario(novo_email, nova_senha, "127.0.0.1"):
-                    st.success("Sua conta foi criada com sucesso! Mude para a aba de Login.")
-                else:
-                    st.error("Este e-mail já está em uso ou ocorreu um erro no servidor.")
+        st.subheader("Recuperação via WhatsApp")
+        rec_email = st.text_input("E-mail Cadastrado", key="rec_email")
+        rec_whatsapp = st.text_input("WhatsApp com DDD (Apenas números)", key="rec_whatsapp")
+        
+        if st.button("Solicitar Nova Senha", key="btn_rec_password"):
+            user_data = db_carregar_usuario(rec_email)
+            if user_data and str(user_data.get("whatsapp", "")).strip() == rec_whatsapp.strip():
+                # Gera nova senha numérica aleatória de 6 dígitos
+                nova_senha_gerada = str(random.randint(100000, 999999))
+                if db_atualizar_senha(rec_email, nova_senha_gerada):
+                    msg_whatsapp = f"Olá, solicitei a recuperação de senha no Vision Pro V3.\nE-mail: {rec_email}\nMinha Nova Senha Gerada: {nova_senha_gerada}"
+                    url_api_wa = f"https://api.whatsapp.com/send?phone={WHATSAPP_SUPORTE}&text={requests.utils.quote(msg_whatsapp)}"
+                    
+                    st.success("Senha atualizada! Clique no botão abaixo para encaminhar a validação direto ao seu WhatsApp de Suporte.")
+                    st.markdown(f'<a href="{url_api_wa}" target="_blank"><button style="background-color:#25d366;color:white;border:none;padding:10px;border-radius:5px;font-weight:bold;cursor:pointer;width:100%;">🟢 Enviar Senha para o WhatsApp</button></a>', unsafe_allow_html=True)
             else:
-                st.warning("Por favor, preencha todos os campos vazios.")
+                st.error("Dados incorretos. E-mail ou WhatsApp não conferem no banco.")
 else:
     # Cabeçalho do App Autenticado
     st.title("🛡️ DASHBOARD VISION PRO")
     
     col_user, col_logout = st.columns([3, 1])
     with col_user:
-        st.write(f"Usuário Ativo: `{st.session_state['USER']}`")
+        st.write(f"Conectado como: `{st.session_state['USER']}`")
     with col_logout:
-        if st.button("Sair do Sistema", type="primary", use_container_width=True, key="btn_logout"):
+        if st.button("Sair", type="primary", use_container_width=True, key="btn_logout"):
             st.session_state["USER"] = None
             st.rerun()
 
     st.markdown("---")
 
+    # SCANNER EM TEMPO REAL E GRÁFICO PREMIUM
+    st.markdown(f"""
+        <div class="scanner-box">
+            <span style='color:#9ca3af; font-size:14px; font-weight:bold;'>📡 SCANNER MULTI-ATIVOS EM EXECUÇÃO</span><br>
+            <span style='color:white; font-size:22px; font-weight:bold;'>Analisando agora: </span>
+            <span style='color:#00ffcc; font-size:24px; font-weight:bold;'>{st.session_state["ATIVO_ATUAL"]}</span>
+        </div>
+    """, unsafe_allow_html=True)
+    
+    # Gráfico Premium de área mostrando a oscilação do mercado em tempo real
+    st.area_chart(st.session_state["GRAFICO_DATA"], use_container_width=True)
+
     # Área do Painel de Controle e Monitoramento
     col1, col2 = st.columns(2)
     with col1:
-        if st.button("🚀 INICIAR SCANNER ANALÍTICO", use_container_width=True, key="btn_start_scan"):
+        if st.button("🚀 INICIAR ANALISADOR", use_container_width=True, key="btn_start_scan"):
             st.session_state["BOT_ATIVO"] = True
             st.session_state["SINAL_DISPLAY"] = "📡 Procurando oportunidades nos mercados..."
     with col2:
-        if st.button("🛑 PARAR SCANNER", use_container_width=True, key="btn_stop_scan"):
+        if st.button("🛑 PAUSAR ANALISADOR", use_container_width=True, key="btn_stop_scan"):
             st.session_state["BOT_ATIVO"] = False
             st.session_state["SINAL_DISPLAY"] = "Scanner Pausado."
 
     # Mostrador do Alerta Atual
     st.info(st.session_state["SINAL_DISPLAY"])
 
-    # Painel de Resultados Manuais (Aparece se houver sinal ativo)
+    # Painel de Resultados Manuais
     if st.session_state["AG_RESULTADO"]:
         st.warning("Aguardando verificação do resultado da operação:")
         c1, c2, c3 = st.columns(3)
@@ -302,16 +340,41 @@ else:
     else:
         st.caption("Nenhum registro encontrado no banco de dados Supabase.")
 
-    # Painel Administrativo Oculto (Apenas para o admin)
+    # ================= PAINEL ADMINISTRATIVO CRUCIAL (GESTÃO DO ADM) =================
     if st.session_state["USER"] == ADMIN_EMAIL:
         st.markdown("---")
-        with st.expander("👥 PAINEL ADMINISTRATIVO (GESTÃO DE CLIENTES)"):
-            st.write("Gerencie os acessos do banco de dados aqui.")
+        with st.expander("👥 PAINEL ADMINISTRATIVO MASTER"):
+            
+            # Sub-aba 1: Criar Usuários
+            st.markdown("### ➕ Cadastrar Novo Cliente")
+            novo_email_adm = st.text_input("E-mail do Cliente", key="adm_novo_email")
+            nova_senha_adm = st.text_input("Senha de Acesso", type="password", key="adm_nova_senha")
+            novo_whatsapp_adm = st.text_input("WhatsApp do Cliente (Apenas números com DDD)", key="adm_novo_whatsapp")
+            
+            if st.button("Salvar e Liberar Acesso", key="btn_adm_salvar_user"):
+                if novo_email_adm and nova_senha_adm and novo_whatsapp_adm:
+                    if db_salvar_usuario(novo_email_adm, nova_senha_adm, novo_whatsapp_adm):
+                        st.success(f"Usuário {novo_email_adm} cadastrado com sucesso!")
+                    else:
+                        st.error("Erro! Usuário já existe ou falha de conexão.")
+                else:
+                    st.warning("Preencha todos os campos para cadastrar.")
+            
+            st.markdown("---")
+            
+            # Sub-aba 2: Gerenciar Clientes Existentes
+            st.markdown("### ⚙️ Gerenciar Clientes Cadastrados")
             alvo = st.text_input("E-mail do Cliente Alvo", key="admin_target_user")
             cc1, cc2 = st.columns(2)
-            if cc1.button("Renovar +30 Dias", key="btn_renew_user"):
-                db_renovar_usuario(alvo)
-                st.success(f"{alvo} renovado!")
-            if cc2.button("Excluir Usuário", type="primary", key="btn_delete_user"):
-                db_excluir_usuario(alvo)
-                st.error(f"{alvo} deletado do banco!")
+            if cc1.button("Renovar Assinatura (+30 Dias)", key="btn_renew_user"):
+                if alvo:
+                    db_renovar_usuario(alvo)
+                    st.success(f"Acesso de {alvo} renovado!")
+                else:
+                    st.warning("Insira o e-mail do cliente.")
+            if cc2.button("Excluir Cliente Permanentemente", type="primary", key="btn_delete_user"):
+                if alvo:
+                    db_excluir_usuario(alvo)
+                    st.error(f"Usuário {alvo} deletado!")
+                else:
+                    st.warning("Insira o e-mail do cliente.")
