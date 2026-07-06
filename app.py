@@ -60,7 +60,8 @@ WHATSAPP_SUPORTE = "5511999999999"  # Configure o seu número aqui (com DDI e DD
 def enviar_telegram(mensagem):
     try:
         url = f"https://api.telegram.org/bot{TOKEN_TELEGRAM}/sendMessage"
-        payload = {"chat_id": CHAT_ID_TELEGRAM, "text": message, "parse_mode": "HTML"}
+        # CORRIGIDO: alterado 'message' para 'mensagem' para bater com o parâmetro da função
+        payload = {"chat_id": CHAT_ID_TELEGRAM, "text": mensagem, "parse_mode": "HTML"}
         requests.post(url, json=payload, timeout=10)
     except Exception as e:
         print(f"Erro Telegram: {e}")
@@ -75,7 +76,6 @@ def db_carregar_usuario(email):
 
 def db_salvar_usuario(email, senha, whatsapp, ip="127.0.0.1"):
     try:
-        # Nota: Certifique-se de que a coluna 'whatsapp' existe na tabela 'usuarios' do seu Supabase
         supabase.table("usuarios").insert({"email": email, "senha": senha, "whatsapp": whatsapp, "ip": ip}).execute()
         return True
     except:
@@ -196,7 +196,6 @@ def bot_background_loop():
                 data = get_data_v2(ticker, st.session_state["TIMEFRAME"])
                 if not data: continue
 
-                # Atualiza dinamicamente o gráfico com os últimos fechamentos
                 st.session_state["GRAFICO_DATA"] = list(data["close"][-20:])
 
                 sinal = analisar_estrategia(data, "MHI1")
@@ -218,7 +217,7 @@ if "THREAD_STARTED" not in st.session_state:
     threading.Thread(target=bot_background_loop, daemon=True).start()
     st.session_state["THREAD_STARTED"] = True
 
-# ================= SIDEBAR GLOBAL (SUPORTE E LINK) =================
+# ================= SIDEBAR GLOBAL =================
 with st.sidebar:
     st.markdown("### 🎯 VISION NETWORKS")
     st.markdown("---")
@@ -227,7 +226,7 @@ with st.sidebar:
     st.markdown("---")
     st.caption("Versão Pro V3.5 Premium")
 
-# ================= INTERFACE GRÁFICA (STREAMLIT UI) =================
+# ================= INTERFACE GRÁFICA =================
 if st.session_state["USER"] is None:
     st.title("🎯 VISION PRO V3")
     aba1, aba2 = st.tabs(["🔒 Acessar Painel", "🔑 Recuperar Acesso"])
@@ -250,13 +249,12 @@ if st.session_state["USER"] is None:
 
     with aba2:
         st.subheader("Recuperação via WhatsApp")
-        rec_email = st.text_input("E-mail Cadastrado", key="rec_email")
-        rec_whatsapp = st.text_input("WhatsApp com DDD (Apenas números)", key="rec_whatsapp")
+        rec_email = st.text_input("E-mail Cadastrado", key="rec_email_input")
+        rec_whatsapp = st.text_input("WhatsApp com DDD (Apenas números)", key="rec_whatsapp_input")
         
         if st.button("Solicitar Nova Senha", key="btn_rec_password"):
             user_data = db_carregar_usuario(rec_email)
             if user_data and str(user_data.get("whatsapp", "")).strip() == rec_whatsapp.strip():
-                # Gera nova senha numérica aleatória de 6 dígitos
                 nova_senha_gerada = str(random.randint(100000, 999999))
                 if db_atualizar_senha(rec_email, nova_senha_gerada):
                     msg_whatsapp = f"Olá, solicitei a recuperação de senha no Vision Pro V3.\nE-mail: {rec_email}\nMinha Nova Senha Gerada: {nova_senha_gerada}"
@@ -289,7 +287,6 @@ else:
         </div>
     """, unsafe_allow_html=True)
     
-    # Gráfico Premium de área mostrando a oscilação do mercado em tempo real
     st.area_chart(st.session_state["GRAFICO_DATA"], use_container_width=True)
 
     # Área do Painel de Controle e Monitoramento
@@ -340,16 +337,15 @@ else:
     else:
         st.caption("Nenhum registro encontrado no banco de dados Supabase.")
 
-    # ================= PAINEL ADMINISTRATIVO CRUCIAL (GESTÃO DO ADM) =================
+    # ================= PAINEL ADMINISTRATIVO MASTER (CORRIGIDO: KEYS ÚNICAS) =================
     if st.session_state["USER"] == ADMIN_EMAIL:
         st.markdown("---")
         with st.expander("👥 PAINEL ADMINISTRATIVO MASTER"):
             
-            # Sub-aba 1: Criar Usuários
             st.markdown("### ➕ Cadastrar Novo Cliente")
-            novo_email_adm = st.text_input("E-mail do Cliente", key="adm_novo_email")
-            nova_senha_adm = st.text_input("Senha de Acesso", type="password", key="adm_nova_senha")
-            novo_whatsapp_adm = st.text_input("WhatsApp do Cliente (Apenas números com DDD)", key="adm_novo_whatsapp")
+            novo_email_adm = st.text_input("E-mail do Cliente", key="adm_input_novo_email")
+            nova_senha_adm = st.text_input("Senha de Acesso", type="password", key="adm_input_nova_senha")
+            novo_whatsapp_adm = st.text_input("WhatsApp do Cliente (Apenas números com DDD)", key="adm_input_novo_whatsapp")
             
             if st.button("Salvar e Liberar Acesso", key="btn_adm_salvar_user"):
                 if novo_email_adm and nova_senha_adm and novo_whatsapp_adm:
@@ -362,9 +358,8 @@ else:
             
             st.markdown("---")
             
-            # Sub-aba 2: Gerenciar Clientes Existentes
             st.markdown("### ⚙️ Gerenciar Clientes Cadastrados")
-            alvo = st.text_input("E-mail do Cliente Alvo", key="admin_target_user")
+            alvo = st.text_input("E-mail do Cliente Alvo", key="admin_target_user_input")
             cc1, cc2 = st.columns(2)
             if cc1.button("Renovar Assinatura (+30 Dias)", key="btn_renew_user"):
                 if alvo:
