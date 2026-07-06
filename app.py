@@ -43,6 +43,11 @@ st.markdown("""
             border-left: 5px solid #00ffcc;
             margin-bottom: 15px;
         }
+        .radar-text {
+            color: #00ffcc;
+            font-family: monospace;
+            font-size: 13px;
+        }
     </style>
 """, unsafe_allow_html=True)
 
@@ -60,7 +65,6 @@ WHATSAPP_SUPORTE = "5511999999999"  # Configure o seu número aqui (com DDI e DD
 def enviar_telegram(mensagem):
     try:
         url = f"https://api.telegram.org/bot{TOKEN_TELEGRAM}/sendMessage"
-        # CORRIGIDO: alterado 'message' para 'mensagem' para bater com o parâmetro da função
         payload = {"chat_id": CHAT_ID_TELEGRAM, "text": mensagem, "parse_mode": "HTML"}
         requests.post(url, json=payload, timeout=10)
     except Exception as e:
@@ -76,23 +80,35 @@ def db_carregar_usuario(email):
 
 def db_salvar_usuario(email, senha, whatsapp, ip="127.0.0.1"):
     try:
-        supabase.table("usuarios").insert({"email": email, "senha": senha, "whatsapp": whatsapp, "ip": ip}).execute()
+        hoje = datetime.now().strftime("%Y-%m-%d")
+        # CORREÇÃO: Inicializando wins, reds e winrate com 0 explicitamente para evitar erros de leitura
+        supabase.table("usuarios").insert({
+            "email": email, 
+            "senha": senha, 
+            "whatsapp": whatsapp, 
+            "ip": ip,
+            "criado_em": hoje,
+            "wins": 0,
+            "reds": 0,
+            "winrate": 0.0
+        }).execute()
         return True
-    except:
+    except Exception as e:
+        print(f"Erro ao salvar usuário: {e}")
         return False
 
 def db_atualizar_estatisticas(email, is_win):
     user = db_carregar_usuario(email)
     if user:
-        wins = user["wins"] + 1 if is_win else user["wins"]
-        reds = user["reds"] + 1 if not is_win else user["reds"]
+        wins = user.get("wins", 0) + 1 if is_win else user.get("wins", 0)
+        reds = user.get("reds", 0) + 1 if not is_win else user.get("reds", 0)
         total = wins + reds
         winrate = round((wins / total) * 100, 1) if total > 0 else 0
-        supabase.table("usuarios").update({"wins": wins, "reds": reds, "winrate": winrate}).execute()
+        supabase.table("usuarios").update({"wins": wins, "reds": reds, "winrate": winrate}).eq("email", email).execute()
 
 def db_renovar_usuario(email):
     hoje = datetime.now().strftime("%Y-%m-%d")
-    supabase.table("usuarios").update({"criado_em": hoje}).execute()
+    supabase.table("usuarios").update({"criado_em": hoje}).eq("email", email).execute()
 
 def db_excluir_usuario(email):
     supabase.table("usuarios").delete().eq("email", email).execute()
@@ -165,10 +181,10 @@ def get_data_v2(ticker, tf):
 def analisar_estrategia(data, estrategia, i=-1):
     c, o, h, l = data["close"], data["open"], data["high"], data["low"]
     if len(c) < 30: return None
-    if estrategia == "LOGICA_DO_PRECO":
+    if estrategia == "LOGICA_DO_PRECO" or estrategia == "TODAS":
         if c[i] > o[i] and c[i] > h[i-1]: return "CALL"
         if c[i] < o[i] and c[i] < l[i-1]: return "PUT"
-    if estrategia == "MHI1":
+    if estrategia == "MHI1" or estrategia == "TODAS":
         cores = [("G" if c[j] > o[j] else "R") for j in range(i-2, i+1)]
         return "PUT" if cores.count("G") > cores.count("R") else "CALL"
     return None
@@ -183,39 +199,6 @@ if "SINAL_DISPLAY" not in st.session_state: st.session_state["SINAL_DISPLAY"] = 
 if "AG_RESULTADO" not in st.session_state: st.session_state["AG_RESULTADO"] = False
 if "ATIVO_ATUAL" not in st.session_state: st.session_state["ATIVO_ATUAL"] = "Nenhum"
 if "GRAFICO_DATA" not in st.session_state: st.session_state["GRAFICO_DATA"] = [0.0] * 20
-
-# ================= LOOP DE SEGUNDO PLANO =================
-def bot_background_loop():
-    FUSO = pytz.timezone("America/Sao_Paulo")
-    while True:
-        if st.session_state["BOT_ATIVO"] and not st.session_state["AG_RESULTADO"]:
-            ativos = ATIVOS_BASE["FOREX"] + ATIVOS_BASE["CRIPTO"] if st.session_state["MODO_MERCADO"] == "TODOS" else ATIVOS_BASE[st.session_state["MODO_MERCADO"]]
-            for ativo in ativos:
-                st.session_state["ATIVO_ATUAL"] = ativo
-                ticker = MAPA_TICKERS.get(ativo, ativo)
-                data = get_data_v2(ticker, st.session_state["TIMEFRAME"])
-                if not data: continue
-
-                st.session_state["GRAFICO_DATA"] = list(data["close"][-20:])
-
-                sinal = analisar_estrategia(data, "MHI1")
-                if sinal:
-                    h_ent = datetime.now(FUSO).strftime('%H:%M')
-                    h_exp = (datetime.now(FUSO) + timedelta(minutes=st.session_state["TIMEFRAME"])).strftime('%H:%M')
-                    sinal_txt = f"{h_ent} | {h_exp} | {ativo}"
-
-                    st.session_state["SINAL_DISPLAY"] = f"🎯 **SINAL CONFIRMADO**\n\n**Ativo:** {ativo}\n**Direção:** {sinal}\n**Entrada:** {h_ent}"
-                    db_Salvar_sinal(sinal_txt)
-
-                    enviar_telegram(f"🎯 <b>SINAL CONFIRMADO</b>\n\n📈 Ativo: {ativo}\n🧭 Direção: {sinal}\n🕒 Time: M{st.session_state['TIMEFRAME']}")
-                    st.session_state["AG_RESULTADO"] = True
-                    break
-                time.sleep(0.5)
-        time.sleep(2)
-
-if "THREAD_STARTED" not in st.session_state:
-    threading.Thread(target=bot_background_loop, daemon=True).start()
-    st.session_state["THREAD_STARTED"] = True
 
 # ================= SIDEBAR GLOBAL =================
 with st.sidebar:
@@ -260,7 +243,7 @@ if st.session_state["USER"] is None:
                     msg_whatsapp = f"Olá, solicitei a recuperação de senha no Vision Pro V3.\nE-mail: {rec_email}\nMinha Nova Senha Gerada: {nova_senha_gerada}"
                     url_api_wa = f"https://api.whatsapp.com/send?phone={WHATSAPP_SUPORTE}&text={requests.utils.quote(msg_whatsapp)}"
                     
-                    st.success("Senha atualizada! Clique no botão abaixo para encaminhar a validação direto ao seu WhatsApp de Suporte.")
+                    st.success("Senha updated! Clique no botão abaixo para encaminhar a validação direto ao seu WhatsApp de Suporte.")
                     st.markdown(f'<a href="{url_api_wa}" target="_blank"><button style="background-color:#25d366;color:white;border:none;padding:10px;border-radius:5px;font-weight:bold;cursor:pointer;width:100%;">🟢 Enviar Senha para o WhatsApp</button></a>', unsafe_allow_html=True)
             else:
                 st.error("Dados incorretos. E-mail ou WhatsApp não conferem no banco.")
@@ -278,16 +261,21 @@ else:
 
     st.markdown("---")
 
-    # SCANNER EM TEMPO REAL E GRÁFICO PREMIUM
-    st.markdown(f"""
+    # SCANNER EM TEMPO REAL E GRÁFICO PREMIUM (Com containers dinâmicos)
+    scanner_placeholder = st.empty()
+    grafico_placeholder = st.empty()
+    status_placeholder = st.empty()
+    
+    # Atualização inicial estática baseada no estado atual
+    scanner_placeholder.markdown(f"""
         <div class="scanner-box">
-            <span style='color:#9ca3af; font-size:14px; font-weight:bold;'>📡 SCANNER MULTI-ATIVOS EM EXECUÇÃO</span><br>
-            <span style='color:white; font-size:22px; font-weight:bold;'>Analisando agora: </span>
+            <span style='color:#9ca3af; font-size:14px; font-weight:bold;'>📡 SCANNER MULTI-ATIVOS AGUARDANDO COMANDO</span><br>
+            <span style='color:white; font-size:22px; font-weight:bold;'>Status: </span>
             <span style='color:#00ffcc; font-size:24px; font-weight:bold;'>{st.session_state["ATIVO_ATUAL"]}</span>
         </div>
     """, unsafe_allow_html=True)
     
-    st.area_chart(st.session_state["GRAFICO_DATA"], use_container_width=True)
+    grafico_placeholder.area_chart(st.session_state["GRAFICO_DATA"], use_container_width=True)
 
     # Área do Painel de Controle e Monitoramento
     col1, col2 = st.columns(2)
@@ -299,9 +287,9 @@ else:
         if st.button("🛑 PAUSAR ANALISADOR", use_container_width=True, key="btn_stop_scan"):
             st.session_state["BOT_ATIVO"] = False
             st.session_state["SINAL_DISPLAY"] = "Scanner Pausado."
+            st.session_state["ATIVO_ATUAL"] = "Pausado"
 
-    # Mostrador do Alerta Atual
-    st.info(st.session_state["SINAL_DISPLAY"])
+    status_placeholder.info(st.session_state["SINAL_DISPLAY"])
 
     # Painel de Resultados Manuais
     if st.session_state["AG_RESULTADO"]:
@@ -327,6 +315,7 @@ else:
     with st.expander("⚙️ Configurações de Ativos e Filtros"):
         st.session_state["MODO_MERCADO"] = st.radio("Mercado Alvo", ["TODOS", "FOREX", "CRIPTO"], index=0, key="radio_mercado")
         st.session_state["TIMEFRAME"] = st.selectbox("Timeframe (Minutos)", [1, 5, 15], index=1, key="select_tf")
+        st.session_state["ESTRATEGIA"] = st.selectbox("Estratégia", ["TODAS", "MHI1", "LOGICA_DO_PRECO"], index=0, key="select_est")
 
     # Histórico de Operações vindo direto do Supabase
     st.subheader("📋 Histórico Recente de Sinais")
@@ -337,7 +326,7 @@ else:
     else:
         st.caption("Nenhum registro encontrado no banco de dados Supabase.")
 
-    # ================= PAINEL ADMINISTRATIVO MASTER (CORRIGIDO: KEYS ÚNICAS) =================
+    # ================= PAINEL ADMINISTRATIVO MASTER =================
     if st.session_state["USER"] == ADMIN_EMAIL:
         st.markdown("---")
         with st.expander("👥 PAINEL ADMINISTRATIVO MASTER"):
@@ -373,3 +362,52 @@ else:
                     st.error(f"Usuário {alvo} deletado!")
                 else:
                     st.warning("Insira o e-mail do cliente.")
+
+    # ================= INTERFACE DO SUCESSIVO RADAR EM TEMPO REAL =================
+    # Executa o loop direto na interface caso o botão de Start esteja ligado e aguardando sinal
+    if st.session_state["BOT_ATIVO"] and not st.session_state["AG_RESULTADO"]:
+        FUSO = pytz.timezone("America/Sao_Paulo")
+        ativos = ATIVOS_BASE["FOREX"] + ATIVOS_BASE["CRIPTO"] if st.session_state["MODO_MERCADO"] == "TODOS" else ATIVOS_BASE[st.session_state["MODO_MERCADO"]]
+        
+        # Simula o efeito dinâmico do scanner varrendo a lista sequencialmente
+        for idx_ativo, ativo in enumerate(ativos):
+            if not st.session_state["BOT_ATIVO"] or st.session_state["AG_RESULTADO"]:
+                break
+                
+            st.session_state["ATIVO_ATUAL"] = ativo
+            ticker = MAPA_TICKERS.get(ativo, ativo)
+            
+            # Efeito visual de radar carregando na tela
+            progresso_radar = (idx_ativo + 1) / len(ativos)
+            
+            scanner_placeholder.markdown(f"""
+                <div class="scanner-box">
+                    <span style='color:#00ffcc; font-size:14px; font-weight:bold;'>📡 RADAR SCANNER OPERACIONAL ATIVO</span><br>
+                    <span style='color:white; font-size:18px;'>Mapeando Taxas e Padrões: <b>{ativo}</b></span><br>
+                    <span class="radar-text">🔍 Analisando Estratégia: {st.session_state["ESTRATEGIA"]} | TF: M{st.session_state["TIMEFRAME"]}</span>
+                </div>
+            """, unsafe_allow_html=True)
+            
+            data = get_data_v2(ticker, st.session_state["TIMEFRAME"])
+            if data and len(data["close"]) > 0:
+                st.session_state["GRAFICO_DATA"] = list(data["close"][-20:])
+                grafico_placeholder.area_chart(st.session_state["GRAFICO_DATA"], use_container_width=True)
+                
+                sinal = analisar_estrategia(data, st.session_state["ESTRATEGIA"])
+                if sinal:
+                    h_ent = datetime.now(FUSO).strftime('%H:%M')
+                    h_exp = (datetime.now(FUSO) + timedelta(minutes=st.session_state["TIMEFRAME"])).strftime('%H:%M')
+                    sinal_txt = f"{h_ent} | {h_exp} | {ativo}"
+
+                    st.session_state["SINAL_DISPLAY"] = f"🎯 **SINAL CONFIRMADO**\n\n**Ativo:** {ativo}\n**Direção:** {sinal}\n**Entrada:** {h_ent}"
+                    status_placeholder.info(st.session_state["SINAL_DISPLAY"])
+                    
+                    db_Salvar_sinal(sinal_txt)
+                    enviar_telegram(f"🎯 <b>SINAL CONFIRMADO</b>\n\n📈 Ativo: {ativo}\n🧭 Direção: {sinal}\n🕒 Time: M{st.session_state['TIMEFRAME']}\n📥 Entrada: {h_ent}\n⌛ Expiração: {h_exp}")
+                    
+                    st.session_state["AG_RESULTADO"] = True
+                    st.rerun()
+            
+            time.sleep(0.8) # Delay controlado para dar o efeito visual de escaneamento de taxas
+        
+        st.rerun()
