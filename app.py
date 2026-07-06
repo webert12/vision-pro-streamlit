@@ -148,16 +148,16 @@ def bot_background_loop():
                 ticker = MAPA_TICKERS.get(ativo, ativo)
                 data = get_data_v2(ticker, st.session_state["TIMEFRAME"])
                 if not data: continue
-                
+
                 sinal = analisar_estrategia(data, "MHI1") # Simplificado para teste estável
                 if sinal:
                     h_ent = datetime.now(FUSO).strftime('%H:%M')
                     h_exp = (datetime.now(FUSO) + timedelta(minutes=st.session_state["TIMEFRAME"])).strftime('%H:%M')
                     sinal_txt = f"{h_ent} | {h_exp} | {ativo}"
-                    
+
                     st.session_state["SINAL_DISPLAY"] = f"🎯 **SINAL CONFIRMADO**\n\n**Ativo:** {ativo}\n**Direção:** {sinal}\n**Entrada:** {h_ent}"
                     db_Salvar_sinal(sinal_txt)
-                    
+
                     enviar_telegram(f"🎯 <b>SINAL CONFIRMADO</b>\n\n📈 Ativo: {ativo}\n🧭 Direção: {sinal}\n🕒 Time: M{st.session_state['TIMEFRAME']}")
                     st.session_state["AG_RESULTADO"] = True
                     break
@@ -170,19 +170,25 @@ if "THREAD_STARTED" not in st.session_state:
 # ================= INTERFACE GRÁFICA (STREAMLIT UI) =================
 if st.session_state["USER"] is None:
     aba1, aba2 = st.tabs(["🔒 Login", "📝 Cadastro"])
-    
+
     with aba1:
         st.subheader("Login Vision Pro")
         email_input = st.text_input("E-mail")
         senha_input = st.text_input("Senha", type="password")
         if st.button("Entrar"):
-            user = db_carregar_usuario(email_input)
-            if user and user["senha"] == senha_input: # Troque por hash na produção se preferir
+            # ASSINATURA DE ADM COMPORTAMENTO MASTER (Bypass direto)
+            if email_input == ADMIN_EMAIL and senha_input == "admin123":
                 st.session_state["USER"] = email_input
                 st.rerun()
             else:
-                st.error("Credenciais inválidas ou assinatura expirada.")
-                
+                # Comportamento padrão para clientes normais (busca no Supabase)
+                user = db_carregar_usuario(email_input)
+                if user and user["senha"] == senha_input:
+                    st.session_state["USER"] = email_input
+                    st.rerun()
+                else:
+                    st.error("Credenciais inválidas ou assinatura expirada.")
+
     with aba2:
         st.subheader("Criar Nova Conta")
         novo_email = st.text_input("Novo E-mail")
