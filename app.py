@@ -117,8 +117,10 @@ def enviar_telegram(mensagem):
 
 # ================= FUNÇÕES DE BANCO DE DADOS (SUPABASE) =================
 def db_carregar_usuario(email):
+    if not email or str(email).strip() == "":
+        return None
     try:
-        res = supabase.table("usuarios").select("*").eq("email", email).execute()
+        res = supabase.table("usuarios").select("*").eq("email", email.strip()).execute()
         if hasattr(res, 'data') and res.data and len(res.data) > 0:
             return res.data[0]
         return None
@@ -128,16 +130,18 @@ def db_carregar_usuario(email):
 
 def db_salvar_usuario(email, senha, whatsapp, ip="127.0.0.1"):
     try:
-        # CORREÇÃO PROFISSIONAL: Validação limpa para evitar loops falsos ou duplicações abortadas de tabelas relacionais
+        if not email or not senha or str(email).strip() == "" or str(senha).strip() == "":
+            return False
+            
         check_user = db_carregar_usuario(email)
         if check_user is not None:
             return False
             
         hoje = datetime.now().strftime("%Y-%m-%d")
         supabase.table("usuarios").insert({
-            "email": email, 
-            "senha": senha, 
-            "whatsapp": whatsapp, 
+            "email": email.strip(), 
+            "senha": senha.strip(), 
+            "whatsapp": whatsapp.strip(), 
             "ip": ip,
             "criado_em": hoje,
             "wins": 0,
@@ -258,37 +262,47 @@ if st.session_state["USER"] is None:
     aba1, aba2 = st.tabs(["🔒 Acessar Painel", "🔑 Recuperar Acesso"])
 
     with aba1:
-        st.subheader("Login Protegido")
-        email_input = st.text_input("E-mail", key="login_email_input")
-        senha_input = st.text_input("Senha", type="password", key="login_senha_input")
-        if st.button("Entrar no Sistema", key="btn_login_submit"):
-            if email_input == ADMIN_EMAIL and senha_input == "admin123":
-                st.session_state["USER"] = email_input
-                st.rerun()
-            else:
-                user = db_carregar_usuario(email_input)
-                if user and user["senha"] == senha_input:
+        # CORREÇÃO: Uso de st.form para evitar limpezas durante digitação
+        with st.form(key="form_login"):
+            st.subheader("Login Protegido")
+            email_input = st.text_input("E-mail", key="login_email_input")
+            senha_input = st.text_input("Senha", type="password", key="login_senha_input")
+            botao_login = st.form_submit_button("Entrar no Sistema")
+            
+            if botao_login:
+                if email_input == ADMIN_EMAIL and senha_input == "admin123":
                     st.session_state["USER"] = email_input
                     st.rerun()
                 else:
-                    st.error("Acesso negado. Credenciais inválidas.")
+                    user = db_carregar_usuario(email_input)
+                    if user and user["senha"] == senha_input:
+                        st.session_state["USER"] = email_input
+                        st.rerun()
+                    else:
+                        st.error("Acesso negado. Credenciais inválidas ou assinatura expirada.")
 
     with aba2:
-        st.subheader("Recuperação via WhatsApp")
-        rec_email = st.text_input("E-mail Cadastrado", key="rec_email_input")
-        rec_whatsapp = st.text_input("WhatsApp com DDD (Apenas números)", key="rec_whatsapp_input")
-        
-        if st.button("Solicitar Nova Senha", key="btn_rec_password"):
-            user_data = db_carregar_usuario(rec_email)
-            if user_data and str(user_data.get("whatsapp", "")).strip() == rec_whatsapp.strip():
-                nova_senha_generated = str(random.randint(100000, 999999))
-                if db_atualizar_senha(rec_email, nova_senha_generated):
-                    msg_whatsapp = f"Olá, solicitei a recuperação de senha no Vision Pro V3.\nE-mail: {rec_email}\nMinha Nova Senha Gerada: {nova_senha_generated}"
-                    url_api_wa = f"https://api.whatsapp.com/send?phone={WHATSAPP_SUPORTE}&text={requests.utils.quote(msg_whatsapp)}"
-                    st.success("Senha atualizada! Clique abaixo para validar.")
-                    st.markdown(f'<a href="{url_api_wa}" target="_blank"><button style="background-color:#25d366;color:white;border:none;padding:10px;border-radius:5px;font-weight:bold;cursor:pointer;width:100%;">🟢 Enviar Senha para o WhatsApp</button></a>', unsafe_allow_html=True)
-            else:
-                st.error("Dados incorretos. E-mail ou WhatsApp não conferem no banco.")
+        with st.form(key="form_recuperacao"):
+            st.subheader("Recuperação via WhatsApp")
+            rec_email = st.text_input("E-mail Cadastrado", key="rec_email_input")
+            rec_whatsapp = st.text_input("WhatsApp com DDD (Apenas números)", key="rec_whatsapp_input")
+            botao_rec = st.form_submit_button("Solicitar Nova Senha")
+            
+            if botao_rec:
+                user_data = db_carregar_usuario(rec_email)
+                if user_data and str(user_data.get("whatsapp", "")).strip() == rec_whatsapp.strip():
+                    nova_senha_generated = str(random.randint(100000, 999999))
+                    if db_atualizar_senha(rec_email, nova_senha_generated):
+                        msg_whatsapp = f"Olá, solicitei a recuperação de senha no Vision Pro V3.\nE-mail: {rec_email}\nMinha Nova Senha Gerada: {nova_senha_generated}"
+                        url_api_wa = f"https://api.whatsapp.com/send?phone={WHATSAPP_SUPORTE}&text={requests.utils.quote(msg_whatsapp)}"
+                        st.success("Senha atualizada! Envie para validação clicando no botão verde abaixo após sair do formulário.")
+                        st.session_state["WA_LINK"] = url_api_wa
+                else:
+                    st.error("Dados incorretos. E-mail ou WhatsApp não conferem no banco.")
+                    
+        if "WA_LINK" in st.session_state:
+            st.markdown(f'<a href="{st.session_state["WA_LINK"]}" target="_blank"><button style="background-color:#25d366;color:white;border:none;padding:10px;border-radius:5px;font-weight:bold;cursor:pointer;width:100%;">🟢 Enviar Senha para o WhatsApp</button></a>', unsafe_allow_html=True)
+            del st.session_state["WA_LINK"]
 else:
     # Cabeçalho do App Autenticado
     st.title("🛡️ DASHBOARD VISION PRO")
@@ -299,11 +313,12 @@ else:
     with col_logout:
         if st.button("Sair", type="primary", use_container_width=True, key="btn_logout"):
             st.session_state["USER"] = None
+            st.session_state["BOT_ATIVO"] = False
             st.rerun()
 
     st.markdown("---")
 
-    # SCANNER EM TEMPO REAL (SEM GRÁFICO AZUL)
+    # SCANNER EM TEMPO REAL
     scanner_placeholder = st.empty()
     status_placeholder = st.empty()
     
@@ -367,7 +382,7 @@ else:
         st.session_state["TIMEFRAME"] = st.selectbox("Timeframe (Minutos)", [1, 5, 15], index=1, key="select_tf")
         st.session_state["ESTRATEGIA"] = st.selectbox("Estratégia", ["TODAS", "MHI1", "LOGICA_DO_PRECO", "RSI + MACD + MA", "REVERSÃO / RETRAÇÃO"], index=0, key="select_est")
 
-    # HISTÓRICO DINÂMICO APENAS SOB DEMANDA (Via clique no botão)
+    # HISTÓRICO DINÂMICO
     st.markdown("---")
     if st.button("📋 Ver Histórico de Sinais", use_container_width=True):
         st.session_state["MOSTRAR_HISTORICO"] = not st.session_state["MOSTRAR_HISTORICO"]
@@ -384,20 +399,24 @@ else:
     # ================= PAINEL ADMINISTRATIVO MASTER =================
     if st.session_state["USER"] == ADMIN_EMAIL:
         st.markdown("---")
-        with st.expander("👥 PAINEL ADMINISTRATIVO MASTER"):
-            st.markdown("### ➕ Cadastrar Novo Cliente")
-            novo_email_adm = st.text_input("E-mail do Cliente", key="adm_input_novo_email")
-            nova_senha_adm = st.text_input("Senha de Acesso", type="password", key="adm_input_nova_senha")
-            novo_whatsapp_adm = st.text_input("WhatsApp do Cliente (Apenas números com DDD)", key="adm_input_novo_whatsapp")
+        with st.expander("👥 PAINEL ADMINISTRATIVO MASTER", expanded=True):
             
-            if st.button("Salvar e Liberar Acesso", key="btn_adm_salvar_user"):
-                if novo_email_adm and nova_senha_adm and novo_whatsapp_adm:
-                    if db_salvar_usuario(novo_email_adm, nova_senha_adm, novo_whatsapp_adm):
-                        st.success(f"Usuário {novo_email_adm} cadastrado com sucesso!")
+            # CORREÇÃO CRÍTICA: Cadastro encapsulado em Form para não bugar com os re-runs do analisador em background
+            with st.form(key="form_cadastro_cliente"):
+                st.markdown("### ➕ Cadastrar Novo Cliente")
+                novo_email_adm = st.text_input("E-mail do Cliente", key="adm_input_novo_email")
+                nova_senha_adm = st.text_input("Senha de Acesso", type="password", key="adm_input_nova_senha")
+                novo_whatsapp_adm = st.text_input("WhatsApp do Cliente (Apenas números com DDD)", key="adm_input_novo_whatsapp")
+                botao_salvar_adm = st.form_submit_button("Salvar e Liberar Acesso")
+                
+                if botao_salvar_adm:
+                    if novo_email_adm and nova_senha_adm and novo_whatsapp_adm:
+                        if db_salvar_usuario(novo_email_adm, nova_senha_adm, novo_whatsapp_adm):
+                            st.success(f"Usuário {novo_email_adm} cadastrado com sucesso!")
+                        else:
+                            st.error("Erro! Usuário já existe ou erro de conexão com banco de dados.")
                     else:
-                        st.error("Erro! Usuário já existe ou erro de conexão com banco de dados.")
-                else:
-                    st.warning("Preencha todos os campos para cadastrar.")
+                        st.warning("Preencha todos os campos para cadastrar.")
             
             st.markdown("---")
             st.markdown("### ⚙️ Gerenciar Clientes Cadastrados")
@@ -428,7 +447,6 @@ else:
             st.session_state["ATIVO_ATUAL"] = ativo
             ticker = MAPA_TICKERS.get(ativo, ativo)
             
-            # Alerta com antecedência (Padrão resgatado do test.py antes do processamento final)
             status_placeholder.warning(f"⚠️ ATENÇÃO: Analisando volatilidade de pré-entrada em {ativo}...")
             
             scanner_placeholder.markdown(f"""
@@ -440,7 +458,6 @@ else:
                 </div>
             """, unsafe_allow_html=True)
             
-            # CORREÇÃO CRÍTICA: Passando dinamicamente a variável do Timeframe para alimentar a varredura
             data = get_data_v2(ticker, st.session_state["TIMEFRAME"])
             if data and len(data["close"]) > 0:
                 sinal = analisar_estrategia(data, st.session_state["ESTRATEGIA"])
@@ -458,6 +475,6 @@ else:
                     st.session_state["AG_RESULTADO"] = True
                     st.rerun()
             
-            time.sleep(1.2) # Intervalo do Alerta com antecedência
+            time.sleep(1.2)
         
         st.rerun()
