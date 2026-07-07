@@ -98,6 +98,7 @@ if "MOSTRAR_HISTORICO" not in st.session_state:
 if "PRECOS_GRAFICO" not in st.session_state:
     st.session_state["PRECOS_GRAFICO"] = []
 
+# Estados de notificações administrativas
 if "ADM_MSG_SUCESSO" not in st.session_state:
     st.session_state["ADM_MSG_SUCESSO"] = None
 if "ADM_MSG_ERRO" not in st.session_state:
@@ -190,6 +191,17 @@ def db_atualizar_senha(email, nova_senha):
         return True
     except:
         return False
+
+def db_verificar_assinatura(email):
+    if email == ADMIN_EMAIL: return True, 999
+    user = db_carregar_usuario(email)
+    if not user: return False, 0
+    try:
+        data_criacao = datetime.strptime(user["criado_em"], "%Y-%m-%d")
+        dias_restantes = 30 - (datetime.now() - data_criacao).days
+        return (True, dias_restantes) if dias_restantes > 0 else (False, 0)
+    except:
+        return False, 0
 
 def db_Salvar_sinal(sinal_texto):
     try:
@@ -298,8 +310,7 @@ if st.session_state["USER"] is None:
                     nova_senha_generated = str(random.randint(100000, 999999))
                     if db_atualizar_senha(rec_email, nova_senha_generated):
                         msg_whatsapp = f"Olá, solicitei a recuperação de senha no Vision Pro V3.\nE-mail: {rec_email}\nMinha Nova Senha Gerada: {nova_senha_generated}"
-                        # ATUALIZAÇÃO 1: Link direto para WhatsApp
-                        url_api_wa = f"https://wa.me/{rec_whatsapp}?text={requests.utils.quote(msg_whatsapp)}"
+                        url_api_wa = f"https://api.whatsapp.com/send?phone={WHATSAPP_SUPORTE}&text={requests.utils.quote(msg_whatsapp)}"
                         st.success("Senha atualizada! Clique no botão abaixo para enviar.")
                         st.session_state["WA_LINK"] = url_api_wa
                 else:
@@ -336,6 +347,7 @@ else:
                 <span style='color:#9ca3af; font-size:13px;'>Clique no botão abaixo para iniciar o radar de varredura.</span>
             </div>
         """, unsafe_allow_html=True)
+        # Exibe gráfico vazio ou estático quando pausado
         grafico_placeholder.line_chart(pd.DataFrame([0]*20))
     else:
         scanner_placeholder.markdown(f"""
@@ -347,12 +359,13 @@ else:
             </div>
         """, unsafe_allow_html=True)
         
+        # Renderização dinâmica do gráfico se houver dados coletados
         if len(st.session_state["PRECOS_GRAFICO"]) > 0:
             grafico_placeholder.line_chart(pd.DataFrame(st.session_state["PRECOS_GRAFICO"][-20:]))
         else:
             grafico_placeholder.line_chart(pd.DataFrame([0]*20))
 
-    # Painel de Controle
+    # Painel de Controle de Varredura
     col1, col2 = st.columns(2)
     with col1:
         if st.button("🚀 INICIAR ANALISADOR", use_container_width=True, key="btn_start_scan"):
@@ -389,11 +402,13 @@ else:
             st.session_state["AG_RESULTADO"] = False
             st.rerun()
 
+    # Filtros operacionais
     with st.expander("⚙️ Configurações de Ativos e Filtros"):
         st.session_state["MODO_MERCADO"] = st.radio("Mercado Alvo", ["TODOS", "FOREX", "CRIPTO"], key="radio_mercado")
         st.session_state["TIMEFRAME"] = st.selectbox("Timeframe (Minutos)", [1, 5, 15], index=1, key="select_tf")
         st.session_state["ESTRATEGIA"] = st.selectbox("Estratégia", ["TODAS", "MHI1", "LOGICA_DO_PRECO", "RSI + MACD + MA", "REVERSÃO / RETRAÇÃO"], index=0, key="select_est")
 
+    # Histórico de Sinais obtidos do Supabase
     st.markdown("---")
     if st.button("📋 Ver Histórico de Sinais", use_container_width=True):
         st.session_state["MOSTRAR_HISTORICO"] = not st.session_state["MOSTRAR_HISTORICO"]
@@ -407,52 +422,106 @@ else:
         else:
             st.caption("Nenhum registro encontrado no banco de dados Supabase.")
 
-    # Painel Administrativo
+    # ================= PAINEL ADMINISTRATIVO MASTER =================
     if st.session_state["USER"] == ADMIN_EMAIL:
         st.markdown("---")
         with st.expander("👥 PAINEL ADMINISTRATIVO MASTER", expanded=True):
-            if st.session_state["ADM_MSG_SUCESSO"]: st.success(st.session_state["ADM_MSG_SUCESSO"])
-            if st.session_state["ADM_MSG_ERRO"]: st.error(st.session_state["ADM_MSG_ERRO"])
             
+            if st.session_state["ADM_MSG_SUCESSO"]:
+                st.success(st.session_state["ADM_MSG_SUCESSO"])
+            if st.session_state["ADM_MSG_ERRO"]:
+                st.error(st.session_state["ADM_MSG_ERRO"])
+            if st.session_state["ADM_MSG_SUCESSO"] or st.session_state["ADM_MSG_ERRO"]:
+                if st.button("🧹 Limpar Notificação", key="btn_limpar_notif"):
+                    st.session_state["ADM_MSG_SUCESSO"] = None
+                    st.session_state["ADM_MSG_ERRO"] = None
+                    st.rerun()
+
             with st.form(key="form_cadastro_cliente"):
                 st.markdown("### ➕ Cadastrar Novo Cliente")
                 novo_email_adm = st.text_input("E-mail do Cliente", key="adm_input_novo_email")
                 nova_senha_adm = st.text_input("Senha de Acesso", type="password", key="adm_input_nova_senha")
-                novo_whatsapp_adm = st.text_input("WhatsApp do Cliente", key="adm_input_novo_whatsapp")
-                if st.form_submit_button("Salvar e Liberar Acesso"):
-                    if db_salvar_usuario(novo_email_adm, nova_senha_adm, novo_whatsapp_adm):
-                        st.session_state["ADM_MSG_SUCESSO"] = "Sucesso!"
+                novo_whatsapp_adm = st.text_input("WhatsApp do Cliente (Apenas números com DDD)", key="adm_input_novo_whatsapp")
+                botao_salvar_adm = st.form_submit_button("Salvar e Liberar Acesso")
+                
+                if botao_salvar_adm:
+                    if novo_email_adm and nova_senha_adm and novo_whatsapp_adm:
+                        if db_salvar_usuario(novo_email_adm, nova_senha_adm, novo_whatsapp_adm):
+                            st.session_state["ADM_MSG_SUCESSO"] = f"Usuário {novo_email_adm.strip().lower()} cadastrado com sucesso!"
+                            st.session_state["ADM_MSG_ERRO"] = None
+                        else:
+                            st.session_state["ADM_MSG_ERRO"] = f"Não foi possível cadastrar. Verifique se o e-mail '{novo_email_adm.strip().lower()}' já existe ou configure o RLS no painel do Supabase."
+                            st.session_state["ADM_MSG_SUCESSO"] = None
                         st.rerun()
-
+                    else:
+                        st.warning("Preencha todos os campos para cadastrar.")
+            
+            st.markdown("---")
+            st.markdown("### ⚙️ Gerenciar Clientes Cadastrados")
             alvo = st.text_input("E-mail do Cliente Alvo", key="admin_target_user_input")
-            if st.button("Renovar Assinatura"):
-                db_renovar_usuario(alvo)
-                st.success("Renovado!")
+            cc1, cc2 = st.columns(2)
+            if cc1.button("Renovar Assinatura (+30 Dias)", key="btn_renew_user"):
+                if alvo:
+                    if db_renovar_usuario(alvo):
+                        st.success(f"Acesso de {alvo} renovado!")
+                    else:
+                        st.error("Falha ao renovar assinatura.")
+                else:
+                    st.warning("Insira o e-mail do cliente.")
+            if cc2.button("Excluir Cliente Permanentemente", type="primary", key="btn_delete_user"):
+                if alvo:
+                    if db_excluir_usuario(alvo):
+                        st.error(f"Usuário {alvo} deletado com sucesso do banco!")
+                    else:
+                        st.error("Falha ao deletar usuário.")
+                else:
+                    st.warning("Insira o e-mail do cliente.")
 
-    # ATUALIZAÇÃO 2: LOOP COM ALERTAS
+    # ================= LOOP DINÂMICO DE VARREDURA =================
     if st.session_state["BOT_ATIVO"] and not st.session_state["AG_RESULTADO"]:
-        # Alertas Temporizados no Loop
-        seg = datetime.now().second
-        if 40 <= seg <= 45: st.sidebar.warning("⚠️ Atenção: Pre-entrada em 20s")
-        if 55 <= seg <= 59: st.sidebar.success("🎯 Preparar para a entrada!")
-
         FUSO = pytz.timezone("America/Sao_Paulo")
         ativos = ATIVOS_BASE["FOREX"] + ATIVOS_BASE["CRIPTO"] if st.session_state["MODO_MERCADO"] == "TODOS" else ATIVOS_BASE[st.session_state["MODO_MERCADO"]]
         
         for ativo in ativos:
-            if not st.session_state["BOT_ATIVO"] or st.session_state["AG_RESULTADO"]: break
+            if not st.session_state["BOT_ATIVO"] or st.session_state["AG_RESULTADO"]:
+                break
+                
             st.session_state["ATIVO_ATUAL"] = ativo
             ticker = MAPA_TICKERS.get(ativo, ativo)
+            
+            status_placeholder.warning(f"⚠️ ATENÇÃO: Analisando volatilidade de pré-entrada em {ativo}...")
+            
             data = get_data_v2(ticker, st.session_state["TIMEFRAME"])
             if data and len(data["close"]) > 0:
+                # Atualiza a lista de preços do estado para plotagem do gráfico
                 st.session_state["PRECOS_GRAFICO"] = list(data["close"][-20:])
+                
+                # Atualização imediata do Scanner e do Gráfico na tela
+                scanner_placeholder.markdown(f"""
+                    <div class="scanner-box">
+                        <div class="radar-pulse"></div>
+                        <span style='color:#00ffcc; font-size:16px; font-weight:bold; display:block;'>📡 RADAR DE ANTENA ATIVO E RODANDO</span>
+                        <div class="ativo-grande">{ativo}</div>
+                        <span class="radar-text">🔍 Mapeando Estratégia: {st.session_state["ESTRATEGIA"]} | M{st.session_state["TIMEFRAME"]}</span>
+                    </div>
+                """, unsafe_allow_html=True)
+                grafico_placeholder.line_chart(pd.DataFrame(st.session_state["PRECOS_GRAFICO"]))
+                
                 sinal = analisar_estrategia(data, st.session_state["ESTRATEGIA"])
                 if sinal:
                     h_ent = datetime.now(FUSO).strftime('%H:%M')
-                    sinal_txt = f"{h_ent} | {ativo}"
+                    h_exp = (datetime.now(FUSO) + timedelta(minutes=st.session_state["TIMEFRAME"])).strftime('%H:%M')
+                    sinal_txt = f"{h_ent} | {h_exp} | {ativo}"
+
+                    st.session_state["SINAL_DISPLAY"] = f"🎯 **SINAL CONFIRMADO**\n\n**Ativo:** {ativo}\n**Direção:** {sinal}\n**Entrada:** {h_ent}"
+                    status_placeholder.info(st.session_state["SINAL_DISPLAY"])
+                    
                     db_Salvar_sinal(sinal_txt)
-                    enviar_telegram(f"🎯 SINAL: {ativo} | {sinal}")
+                    enviar_telegram(f"🎯 <b>SINAL CONFIRMADO</b>\n\n📈 Ativo: {ativo}\n🧭 Direção: {sinal}\n🕒 Time: M{st.session_state['TIMEFRAME']}\n📥 Entrada: {h_ent}\n⌛ Expiração: {h_exp}")
+                    
                     st.session_state["AG_RESULTADO"] = True
                     st.rerun()
+            
             time.sleep(1.0)
+        
         st.rerun()
