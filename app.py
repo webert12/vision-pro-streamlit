@@ -160,20 +160,33 @@ def db_salvar_usuario(email, senha, whatsapp, ip="127.0.0.1"):
         return False
 
 def db_atualizar_estatisticas(email, is_win):
-    user = db_carregar_usuario(email)
-    if user:
-        wins = user.get("wins", 0) + 1 if is_win else user.get("wins", 0)
-        reds = user.get("reds", 0) + 1 if not is_win else user.get("reds", 0)
-        total = wins + reds
-        winrate = round((wins / total) * 100, 1) if total > 0 else 0.0
-        supabase.table("usuarios").update({"wins": wins, "reds": reds, "winrate": winrate}).eq("email", email.strip().lower()).execute()
+    try:
+        user = db_carregar_usuario(email)
+        if user:
+            wins = user.get("wins", 0) + 1 if is_win else user.get("wins", 0)
+            reds = user.get("reds", 0) + 1 if not is_win else user.get("reds", 0)
+            total = wins + reds
+            winrate = round((wins / total) * 100, 1) if total > 0 else 0.0
+            supabase.table("usuarios").update({"wins": wins, "reds": reds, "winrate": winrate}).eq("email", email.strip().lower()).execute()
+    except Exception as e:
+        print(f"Erro ao atualizar estatísticas: {e}")
 
 def db_renovar_usuario(email):
-    hoje = datetime.now().strftime("%Y-%m-%d")
-    supabase.table("usuarios").update({"criado_em": hoje}).eq("email", email.strip().lower()).execute()
+    try:
+        hoje = datetime.now().strftime("%Y-%m-%d")
+        supabase.table("usuarios").update({"criado_em": hoje}).eq("email", email.strip().lower()).execute()
+        return True
+    except Exception as e:
+        print(f"Erro ao renovar usuário: {e}")
+        return False
 
 def db_excluir_usuario(email):
-    supabase.table("usuarios").delete().eq("email", email.strip().lower()).execute()
+    try:
+        supabase.table("usuarios").delete().eq("email", email.strip().lower()).execute()
+        return True
+    except Exception as e:
+        print(f"Erro ao excluir usuário: {e}")
+        return False
 
 def db_atualizar_senha(email, nova_senha):
     try:
@@ -300,7 +313,7 @@ if st.session_state["USER"] is None:
                     if db_atualizar_senha(rec_email, nova_senha_generated):
                         msg_whatsapp = f"Olá, solicitei a recuperação de senha no Vision Pro V3.\nE-mail: {rec_email}\nMinha Nova Senha Gerada: {nova_senha_generated}"
                         url_api_wa = f"https://api.whatsapp.com/send?phone={WHATSAPP_SUPORTE}&text={requests.utils.quote(msg_whatsapp)}"
-                        st.success("Senha atualizada! Envie para validação clicando no botão verde abaixo após sair do formulário.")
+                        st.success("Senha updated! Envie para validação clicando no botão verde abaixo após sair do formulário.")
                         st.session_state["WA_LINK"] = url_api_wa
                 else:
                     st.error("Dados incorretos. E-mail ou WhatsApp não conferem no banco.")
@@ -406,7 +419,7 @@ else:
         st.markdown("---")
         with st.expander("👥 PAINEL ADMINISTRATIVO MASTER", expanded=True):
             
-            # Exibição das mensagens de erro/sucesso persistentes
+            # Exibição das mensagens de erro/sucesso de forma segura e limpa
             if st.session_state["ADM_MSG_SUCESSO"]:
                 st.success(st.session_state["ADM_MSG_SUCESSO"])
             if st.session_state["ADM_MSG_ERRO"]:
@@ -426,12 +439,12 @@ else:
                 
                 if botao_salvar_adm:
                     if novo_email_adm and nova_senha_adm and novo_whatsapp_adm:
-                        # Executa a verificação e salvamento direto no banco
-                        if db_salvar_usuario(novo_email_adm, nova_senha_adm, novo_whatsapp_adm):
+                        res_cadastro = db_salvar_usuario(novo_email_adm, nova_senha_adm, novo_whatsapp_adm)
+                        if res_cadastro:
                             st.session_state["ADM_MSG_SUCESSO"] = f"Usuário {novo_email_adm.strip().lower()} cadastrado com sucesso!"
                             st.session_state["ADM_MSG_ERRO"] = None
                         else:
-                            st.session_state["ADM_MSG_ERRO"] = f"Erro crítico! O e-mail '{novo_email_adm.strip().lower()}' já possui um cadastro ativo no banco de dados."
+                            st.session_state["ADM_MSG_ERRO"] = f"Não foi possível cadastrar. Verifique se o e-mail '{novo_email_adm.strip().lower()}' já existe ou configure o RLS no painel do Supabase."
                             st.session_state["ADM_MSG_SUCESSO"] = None
                         st.rerun()
                     else:
@@ -443,14 +456,18 @@ else:
             cc1, cc2 = st.columns(2)
             if cc1.button("Renovar Assinatura (+30 Dias)", key="btn_renew_user"):
                 if alvo:
-                    db_renovar_usuario(alvo)
-                    st.success(f"Acesso de {alvo} renovado!")
+                    if db_renovar_usuario(alvo):
+                        st.success(f"Acesso de {alvo} renovado!")
+                    else:
+                        st.error("Falha ao renovar assinatura. Verifique o RLS ou conexão do Supabase.")
                 else:
                     st.warning("Insira o e-mail do cliente.")
             if cc2.button("Excluir Cliente Permanentemente", type="primary", key="btn_delete_user"):
                 if alvo:
-                    db_excluir_usuario(alvo)
-                    st.error(f"Usuário {alvo} deletado!")
+                    if db_excluir_usuario(alvo):
+                        st.error(f"Usuário {alvo} deletado com sucesso do banco!")
+                    else:
+                        st.error("Falha ao deletar usuário. Verifique as permissões de RLS no painel do Supabase.")
                 else:
                     st.warning("Insira o e-mail do cliente.")
 
