@@ -96,6 +96,12 @@ if "ATIVO_ATUAL" not in st.session_state:
 if "MOSTRAR_HISTORICO" not in st.session_state:
     st.session_state["MOSTRAR_HISTORICO"] = False
 
+# Estados persistentes para mensagens do painel administrativo
+if "ADM_MSG_SUCESSO" not in st.session_state:
+    st.session_state["ADM_MSG_SUCESSO"] = None
+if "ADM_MSG_ERRO" not in st.session_state:
+    st.session_state["ADM_MSG_ERRO"] = None
+
 # ================= CONEXÃO SUPABASE =================
 SUPABASE_URL = st.secrets["SUPABASE_URL"]
 SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
@@ -120,7 +126,7 @@ def db_carregar_usuario(email):
     if not email or str(email).strip() == "":
         return None
     try:
-        res = supabase.table("usuarios").select("*").eq("email", email.strip()).execute()
+        res = supabase.table("usuarios").select("*").eq("email", email.strip().lower()).execute()
         if hasattr(res, 'data') and res.data and len(res.data) > 0:
             return res.data[0]
         return None
@@ -139,7 +145,7 @@ def db_salvar_usuario(email, senha, whatsapp, ip="127.0.0.1"):
             
         hoje = datetime.now().strftime("%Y-%m-%d")
         supabase.table("usuarios").insert({
-            "email": email.strip(), 
+            "email": email.strip().lower(), 
             "senha": senha.strip(), 
             "whatsapp": whatsapp.strip(), 
             "ip": ip,
@@ -160,18 +166,18 @@ def db_atualizar_estatisticas(email, is_win):
         reds = user.get("reds", 0) + 1 if not is_win else user.get("reds", 0)
         total = wins + reds
         winrate = round((wins / total) * 100, 1) if total > 0 else 0.0
-        supabase.table("usuarios").update({"wins": wins, "reds": reds, "winrate": winrate}).eq("email", email).execute()
+        supabase.table("usuarios").update({"wins": wins, "reds": reds, "winrate": winrate}).eq("email", email.strip().lower()).execute()
 
 def db_renovar_usuario(email):
     hoje = datetime.now().strftime("%Y-%m-%d")
-    supabase.table("usuarios").update({"criado_em": hoje}).eq("email", email).execute()
+    supabase.table("usuarios").update({"criado_em": hoje}).eq("email", email.strip().lower()).execute()
 
 def db_excluir_usuario(email):
-    supabase.table("usuarios").delete().eq("email", email).execute()
+    supabase.table("usuarios").delete().eq("email", email.strip().lower()).execute()
 
 def db_atualizar_senha(email, nova_senha):
     try:
-        supabase.table("usuarios").update({"senha": nova_senha}).eq("email", email).execute()
+        supabase.table("usuarios").update({"senha": nova_senha}).eq("email", email.strip().lower()).execute()
         return True
     except:
         return False
@@ -262,7 +268,6 @@ if st.session_state["USER"] is None:
     aba1, aba2 = st.tabs(["🔒 Acessar Painel", "🔑 Recuperar Acesso"])
 
     with aba1:
-        # CORREÇÃO: Uso de st.form para evitar limpezas durante digitação
         with st.form(key="form_login"):
             st.subheader("Login Protegido")
             email_input = st.text_input("E-mail", key="login_email_input")
@@ -270,13 +275,13 @@ if st.session_state["USER"] is None:
             botao_login = st.form_submit_button("Entrar no Sistema")
             
             if botao_login:
-                if email_input == ADMIN_EMAIL and senha_input == "admin123":
-                    st.session_state["USER"] = email_input
+                if email_input.strip().lower() == ADMIN_EMAIL and senha_input == "admin123":
+                    st.session_state["USER"] = email_input.strip().lower()
                     st.rerun()
                 else:
                     user = db_carregar_usuario(email_input)
                     if user and user["senha"] == senha_input:
-                        st.session_state["USER"] = email_input
+                        st.session_state["USER"] = email_input.strip().lower()
                         st.rerun()
                     else:
                         st.error("Acesso negado. Credenciais inválidas ou assinatura expirada.")
@@ -401,7 +406,17 @@ else:
         st.markdown("---")
         with st.expander("👥 PAINEL ADMINISTRATIVO MASTER", expanded=True):
             
-            # CORREÇÃO CRÍTICA: Cadastro encapsulado em Form para não bugar com os re-runs do analisador em background
+            # Exibição das mensagens de erro/sucesso persistentes
+            if st.session_state["ADM_MSG_SUCESSO"]:
+                st.success(st.session_state["ADM_MSG_SUCESSO"])
+            if st.session_state["ADM_MSG_ERRO"]:
+                st.error(st.session_state["ADM_MSG_ERRO"])
+            if st.session_state["ADM_MSG_SUCESSO"] or st.session_state["ADM_MSG_ERRO"]:
+                if st.button("🧹 Limpar Notificação", key="btn_limpar_notif"):
+                    st.session_state["ADM_MSG_SUCESSO"] = None
+                    st.session_state["ADM_MSG_ERRO"] = None
+                    st.rerun()
+
             with st.form(key="form_cadastro_cliente"):
                 st.markdown("### ➕ Cadastrar Novo Cliente")
                 novo_email_adm = st.text_input("E-mail do Cliente", key="adm_input_novo_email")
@@ -411,10 +426,14 @@ else:
                 
                 if botao_salvar_adm:
                     if novo_email_adm and nova_senha_adm and novo_whatsapp_adm:
+                        # Executa a verificação e salvamento direto no banco
                         if db_salvar_usuario(novo_email_adm, nova_senha_adm, novo_whatsapp_adm):
-                            st.success(f"Usuário {novo_email_adm} cadastrado com sucesso!")
+                            st.session_state["ADM_MSG_SUCESSO"] = f"Usuário {novo_email_adm.strip().lower()} cadastrado com sucesso!"
+                            st.session_state["ADM_MSG_ERRO"] = None
                         else:
-                            st.error("Erro! Usuário já existe ou erro de conexão com banco de dados.")
+                            st.session_state["ADM_MSG_ERRO"] = f"Erro crítico! O e-mail '{novo_email_adm.strip().lower()}' já possui um cadastro ativo no banco de dados."
+                            st.session_state["ADM_MSG_SUCESSO"] = None
+                        st.rerun()
                     else:
                         st.warning("Preencha todos os campos para cadastrar.")
             
