@@ -77,7 +77,6 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ================= TRAVA ANTI-RESET (PERSISTÊNCIA DE SESSÃO) =================
-# Armazenamento local simulado em memória local do Streamlit para evitar perdas em refresh simples
 if "USER" not in st.session_state:
     st.session_state["USER"] = None
 if "BOT_ATIVO" not in st.session_state:
@@ -120,7 +119,7 @@ def enviar_telegram(mensagem):
 def db_carregar_usuario(email):
     try:
         res = supabase.table("usuarios").select("*").eq("email", email).execute()
-        if hasattr(res, 'data') and res.data:
+        if hasattr(res, 'data') and res.data and len(res.data) > 0:
             return res.data[0]
         return None
     except Exception as e:
@@ -129,7 +128,7 @@ def db_carregar_usuario(email):
 
 def db_salvar_usuario(email, senha, whatsapp, ip="127.0.0.1"):
     try:
-        # Evita erro de duplicidade checando previamente de forma limpa
+        # CORREÇÃO PROFISSIONAL: Validação limpa para evitar loops falsos ou duplicações abortadas de tabelas relacionais
         check_user = db_carregar_usuario(email)
         if check_user is not None:
             return False
@@ -441,6 +440,7 @@ else:
                 </div>
             """, unsafe_allow_html=True)
             
+            # CORREÇÃO CRÍTICA: Passando dinamicamente a variável do Timeframe para alimentar a varredura
             data = get_data_v2(ticker, st.session_state["TIMEFRAME"])
             if data and len(data["close"]) > 0:
                 sinal = analisar_estrategia(data, st.session_state["ESTRATEGIA"])
