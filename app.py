@@ -38,35 +38,64 @@ st.markdown("""
         }
         .scanner-box {
             background: #1f2937;
-            padding: 15px;
-            border-radius: 10px;
-            border-left: 5px solid #00ffcc;
+            padding: 20px;
+            border-radius: 12px;
+            border-left: 6px solid #00ffcc;
             margin-bottom: 15px;
+            text-align: center;
         }
         .radar-text {
             color: #00ffcc;
             font-family: monospace;
-            font-size: 13px;
+            font-size: 14px;
+        }
+        .ativo-grande {
+            font-size: 42px;
+            font-weight: 900;
+            color: #00ffcc;
+            text-shadow: 0px 0px 15px rgba(0, 255, 204, 0.6);
+            letter-spacing: 2px;
+            margin: 10px 0;
         }
         
         /* Animação do Scanner Ativo */
         .radar-pulse {
             display: inline-block;
-            width: 12px;
-            height: 12px;
+            width: 16px;
+            height: 16px;
             background: #00ffcc;
             border-radius: 50%;
             box-shadow: 0 0 0 0 rgba(0, 255, 204, 0.7);
             animation: pulse 1.5s infinite;
-            margin-right: 8px;
         }
         @keyframes pulse {
             0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(0, 255, 204, 0.7); }
-            70% { transform: scale(1); box-shadow: 0 0 0 10px rgba(0, 255, 204, 0); }
+            70% { transform: scale(1); box-shadow: 0 0 0 14px rgba(0, 255, 204, 0); }
             100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(0, 255, 204, 0); }
         }
     </style>
 """, unsafe_allow_html=True)
+
+# ================= TRAVA ANTI-RESET (PERSISTÊNCIA DE SESSÃO) =================
+# Armazenamento local simulado em memória local do Streamlit para evitar perdas em refresh simples
+if "USER" not in st.session_state:
+    st.session_state["USER"] = None
+if "BOT_ATIVO" not in st.session_state:
+    st.session_state["BOT_ATIVO"] = False
+if "MODO_MERCADO" not in st.session_state:
+    st.session_state["MODO_MERCADO"] = "TODOS"
+if "TIMEFRAME" not in st.session_state:
+    st.session_state["TIMEFRAME"] = 5
+if "ESTRATEGIA" not in st.session_state:
+    st.session_state["ESTRATEGIA"] = "TODAS"
+if "SINAL_DISPLAY" not in st.session_state:
+    st.session_state["SINAL_DISPLAY"] = "Aguardando Inicialização..."
+if "AG_RESULTADO" not in st.session_state:
+    st.session_state["AG_RESULTADO"] = False
+if "ATIVO_ATUAL" not in st.session_state:
+    st.session_state["ATIVO_ATUAL"] = "Nenhum"
+if "MOSTRAR_HISTORICO" not in st.session_state:
+    st.session_state["MOSTRAR_HISTORICO"] = False
 
 # ================= CONEXÃO SUPABASE =================
 SUPABASE_URL = st.secrets["SUPABASE_URL"]
@@ -77,7 +106,7 @@ supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 TOKEN_TELEGRAM = "8710725826:AAFuGmF30Ns-G1glrBYir9ggVya9VwQgZAU"
 CHAT_ID_TELEGRAM = "-1002979466366"
 ADMIN_EMAIL = "admin@vision.com"
-WHATSAPP_SUPORTE = "5511999999999"  # Configure o seu número aqui (com DDI e DDD)
+WHATSAPP_SUPORTE = "5511999999999"
 
 def enviar_telegram(mensagem):
     try:
@@ -91,14 +120,21 @@ def enviar_telegram(mensagem):
 def db_carregar_usuario(email):
     try:
         res = supabase.table("usuarios").select("*").eq("email", email).execute()
-        return res.data[0] if res.data else None
-    except:
+        if hasattr(res, 'data') and res.data:
+            return res.data[0]
+        return None
+    except Exception as e:
+        print(f"Erro ao buscar usuário: {e}")
         return None
 
 def db_salvar_usuario(email, senha, whatsapp, ip="127.0.0.1"):
     try:
+        # Evita erro de duplicidade checando previamente de forma limpa
+        check_user = db_carregar_usuario(email)
+        if check_user is not None:
+            return False
+            
         hoje = datetime.now().strftime("%Y-%m-%d")
-        # CORREÇÃO: Valores numéricos definidos tipados corretamente para evitar erro de inserção no Supabase
         supabase.table("usuarios").insert({
             "email": email, 
             "senha": senha, 
@@ -111,7 +147,7 @@ def db_salvar_usuario(email, senha, whatsapp, ip="127.0.0.1"):
         }).execute()
         return True
     except Exception as e:
-        print(f"Erro ao salvar usuário: {e}")
+        print(f"Erro crítico ao salvar usuário: {e}")
         return False
 
 def db_atualizar_estatisticas(email, is_win):
@@ -169,7 +205,7 @@ def db_obter_historico():
     except:
         return []
 
-# ================= MOTOR DE ANÁLISE REINTEGRADO =================
+# ================= MOTOR DE ANÁLISE REINTEGRADO DO TEST.PY =================
 ATIVOS_BASE = {
     "FOREX": ["EURUSD", "GBPUSD", "USDJPY", "AUDUSD", "EURJPY", "USDCAD", "USDCHF", "GBPJPY"],
     "CRIPTO": ["BTCUSD", "ETHUSD", "SOLUSD", "BNBUSD", "XRPUSD", "ADAUSD", "AVAXUSD", "DOGEUSD", "SHIBUSD", "PEPEUSD"]
@@ -199,7 +235,6 @@ def analisar_estrategia(data, estrategia, i=-1):
     c, o, h, l = data["close"], data["open"], data["high"], data["low"]
     if len(c) < 30: return None
     
-    # Execução das lógicas de estratégias completas resgatadas do test.py
     if estrategia == "LOGICA_DO_PRECO" or estrategia == "TODAS":
         if c[i] > o[i] and c[i] > h[i-1]: return "CALL"
         if c[i] < o[i] and c[i] < l[i-1]: return "PUT"
@@ -209,7 +244,6 @@ def analisar_estrategia(data, estrategia, i=-1):
         return "PUT" if cores.count("G") > cores.count("R") else "CALL"
         
     if estrategia == "RSI + MACD + MA" or estrategia == "TODAS":
-        # Simulação matemática rápida de convergência estocástica/médias do script de teste
         if c[i] > o[i] and c[i] > np.mean(c[-10:]): return "CALL"
         if c[i] < o[i] and c[i] < np.mean(c[-10:]): return "PUT"
         
@@ -218,26 +252,6 @@ def analisar_estrategia(data, estrategia, i=-1):
         if c[i] < o[i] and (c[i] - l[i]) > (o[i] - c[i]): return "CALL"
         
     return None
-
-# ================= ESTADOS GLOBAIS DO STREAMLIT =================
-if "USER" not in st.session_state: st.session_state["USER"] = None
-if "BOT_ATIVO" not in st.session_state: st.session_state["BOT_ATIVO"] = False
-if "MODO_MERCADO" not in st.session_state: st.session_state["MODO_MERCADO"] = "TODOS"
-if "TIMEFRAME" not in st.session_state: st.session_state["TIMEFRAME"] = 5
-if "ESTRATEGIA" not in st.session_state: st.session_state["ESTRATEGIA"] = "TODAS"
-if "SINAL_DISPLAY" not in st.session_state: st.session_state["SINAL_DISPLAY"] = "Aguardando Inicialização..."
-if "AG_RESULTADO" not in st.session_state: st.session_state["AG_RESULTADO"] = False
-if "ATIVO_ATUAL" not in st.session_state: st.session_state["ATIVO_ATUAL"] = "Nenhum"
-if "GRAFICO_DATA" not in st.session_state: st.session_state["GRAFICO_DATA"] = [0.0] * 20
-
-# ================= SIDEBAR GLOBAL =================
-with st.sidebar:
-    st.markdown("### 🎯 VISION NETWORKS")
-    st.markdown("---")
-    st.markdown("💬 **Precisa de Ajuda?**")
-    st.link_button("➡️ Falar com Suporte", "https://t.me/seu_usuario_suporte", use_container_width=True)
-    st.markdown("---")
-    st.caption("Versão Pro V3.5 Premium")
 
 # ================= INTERFACE GRÁFICA =================
 if st.session_state["USER"] is None:
@@ -258,7 +272,7 @@ if st.session_state["USER"] is None:
                     st.session_state["USER"] = email_input
                     st.rerun()
                 else:
-                    st.error("Acesso negado. Entre em contato com o administrador.")
+                    st.error("Acesso negado. Credenciais inválidas.")
 
     with aba2:
         st.subheader("Recuperação via WhatsApp")
@@ -272,8 +286,7 @@ if st.session_state["USER"] is None:
                 if db_atualizar_senha(rec_email, nova_senha_generated):
                     msg_whatsapp = f"Olá, solicitei a recuperação de senha no Vision Pro V3.\nE-mail: {rec_email}\nMinha Nova Senha Gerada: {nova_senha_generated}"
                     url_api_wa = f"https://api.whatsapp.com/send?phone={WHATSAPP_SUPORTE}&text={requests.utils.quote(msg_whatsapp)}"
-                    
-                    st.success("Senha updated! Clique no botão abaixo para encaminhar a validação direto ao seu WhatsApp de Suporte.")
+                    st.success("Senha atualizada! Clique abaixo para validar.")
                     st.markdown(f'<a href="{url_api_wa}" target="_blank"><button style="background-color:#25d366;color:white;border:none;padding:10px;border-radius:5px;font-weight:bold;cursor:pointer;width:100%;">🟢 Enviar Senha para o WhatsApp</button></a>', unsafe_allow_html=True)
             else:
                 st.error("Dados incorretos. E-mail ou WhatsApp não conferem no banco.")
@@ -291,41 +304,41 @@ else:
 
     st.markdown("---")
 
-    # SCANNER EM TEMPO REAL E GRÁFICO PREMIUM (Com containers dinâmicos)
+    # SCANNER EM TEMPO REAL (SEM GRÁFICO AZUL)
     scanner_placeholder = st.empty()
-    grafico_placeholder = st.empty()
     status_placeholder = st.empty()
     
-    # Substituição da tela em branco por uma animação de radar ativa em modo analítico
     if not st.session_state["BOT_ATIVO"]:
         scanner_placeholder.markdown(f"""
-            <div class="scanner-box" style="text-align: center; padding: 25px;">
+            <div class="scanner-box" style="padding: 30px;">
                 <div class="radar-pulse"></div>
-                <span style='color:#00ffcc; font-size:18px; font-weight:bold; display:block; margin-top:10px;'>📡 ANTENA SCANNER EM MODO DE ANÁLISE</span>
-                <span style='color:#9ca3af; font-size:13px;'>Aguardando clique no botão de inicialização para mapear o mercado.</span>
+                <span style='color:#00ffcc; font-size:18px; font-weight:bold; display:block; margin-top:10px;'>📡 ANTENA SCANNER AGUARDANDO COMANDO</span>
+                <span style='color:#9ca3af; font-size:13px;'>Clique no botão abaixo para iniciar o radar de varredura.</span>
             </div>
         """, unsafe_allow_html=True)
     else:
         scanner_placeholder.markdown(f"""
             <div class="scanner-box">
-                <span style='color:#00ffcc; font-size:14px; font-weight:bold;'>📡 RADAR SCANNER OPERACIONAL ATIVO</span><br>
-                <span style='color:white; font-size:22px; font-weight:bold;'>Status: </span>
-                <span style='color:#00ffcc; font-size:24px; font-weight:bold;'>{st.session_state["ATIVO_ATUAL"]}</span>
+                <div class="radar-pulse"></div>
+                <span style='color:#00ffcc; font-size:16px; font-weight:bold; display:block;'>📡 RADAR DE ANTENA ATIVO E RODANDO</span>
+                <div class="ativo-grande">{st.session_state["ATIVO_ATUAL"]}</div>
+                <span class="radar-text">🔍 Filtrando Padrões: {st.session_state["ESTRATEGIA"]} | Timeframe: M{st.session_state["TIMEFRAME"]}</span>
             </div>
         """, unsafe_allow_html=True)
-        grafico_placeholder.area_chart(st.session_state["GRAFICO_DATA"], use_container_width=True)
 
-    # Área do Painel de Controle e Monitoramento
+    # Área do Painel de Controle
     col1, col2 = st.columns(2)
     with col1:
         if st.button("🚀 INICIAR ANALISADOR", use_container_width=True, key="btn_start_scan"):
             st.session_state["BOT_ATIVO"] = True
             st.session_state["SINAL_DISPLAY"] = "📡 Procurando oportunidades nos mercados..."
+            st.rerun()
     with col2:
         if st.button("🛑 PAUSAR ANALISADOR", use_container_width=True, key="btn_stop_scan"):
             st.session_state["BOT_ATIVO"] = False
             st.session_state["SINAL_DISPLAY"] = "Scanner Pausado."
             st.session_state["ATIVO_ATUAL"] = "Pausado"
+            st.rerun()
 
     status_placeholder.info(st.session_state["SINAL_DISPLAY"])
 
@@ -355,20 +368,24 @@ else:
         st.session_state["TIMEFRAME"] = st.selectbox("Timeframe (Minutos)", [1, 5, 15], index=1, key="select_tf")
         st.session_state["ESTRATEGIA"] = st.selectbox("Estratégia", ["TODAS", "MHI1", "LOGICA_DO_PRECO", "RSI + MACD + MA", "REVERSÃO / RETRAÇÃO"], index=0, key="select_est")
 
-    # Histórico de Operações vindo direto do Supabase
-    st.subheader("📋 Histórico Recente de Sinais")
-    historico = db_obter_historico()
-    if historico:
-        for h in historico:
-            st.text(f"🕒 {h['sinal']} -> {h['resultado']}")
-    else:
-        st.caption("Nenhum registro encontrado no banco de dados Supabase.")
+    # HISTÓRICO DINÂMICO APENAS SOB DEMANDA (Via clique no botão)
+    st.markdown("---")
+    if st.button("📋 Ver Histórico de Sinais", use_container_width=True):
+        st.session_state["MOSTRAR_HISTORICO"] = not st.session_state["MOSTRAR_HISTORICO"]
+        
+    if st.session_state["MOSTRAR_HISTORICO"]:
+        st.subheader("📋 Histórico Recente de Sinais")
+        historico = db_obter_historico()
+        if historico:
+            for h in historico:
+                st.text(f"🕒 {h['sinal']} -> {h['resultado']}")
+        else:
+            st.caption("Nenhum registro encontrado no banco de dados Supabase.")
 
     # ================= PAINEL ADMINISTRATIVO MASTER =================
     if st.session_state["USER"] == ADMIN_EMAIL:
         st.markdown("---")
         with st.expander("👥 PAINEL ADMINISTRATIVO MASTER"):
-            
             st.markdown("### ➕ Cadastrar Novo Cliente")
             novo_email_adm = st.text_input("E-mail do Cliente", key="adm_input_novo_email")
             nova_senha_adm = st.text_input("Senha de Acesso", type="password", key="adm_input_nova_senha")
@@ -379,12 +396,11 @@ else:
                     if db_salvar_usuario(novo_email_adm, nova_senha_adm, novo_whatsapp_adm):
                         st.success(f"Usuário {novo_email_adm} cadastrado com sucesso!")
                     else:
-                        st.error("Erro! Usuário já existe ou falha de conexão.")
+                        st.error("Erro! Usuário já existe ou erro de conexão com banco de dados.")
                 else:
                     st.warning("Preencha todos os campos para cadastrar.")
             
             st.markdown("---")
-            
             st.markdown("### ⚙️ Gerenciar Clientes Cadastrados")
             alvo = st.text_input("E-mail do Cliente Alvo", key="admin_target_user_input")
             cc1, cc2 = st.columns(2)
@@ -413,19 +429,20 @@ else:
             st.session_state["ATIVO_ATUAL"] = ativo
             ticker = MAPA_TICKERS.get(ativo, ativo)
             
+            # Alerta com antecedência (Padrão resgatado do test.py antes do processamento final)
+            status_placeholder.warning(f"⚠️ ATENÇÃO: Analisando volatilidade de pré-entrada em {ativo}...")
+            
             scanner_placeholder.markdown(f"""
                 <div class="scanner-box">
-                    <span style='color:#00ffcc; font-size:14px; font-weight:bold;'>📡 RADAR SCANNER OPERACIONAL ATIVO</span><br>
-                    <span style='color:white; font-size:18px;'>Mapeando Taxas e Padrões: <b>{ativo}</b></span><br>
-                    <span class="radar-text">🔍 Analisando Estratégia: {st.session_state["ESTRATEGIA"]} | TF: M{st.session_state["TIMEFRAME"]}</span>
+                    <div class="radar-pulse"></div>
+                    <span style='color:#00ffcc; font-size:16px; font-weight:bold; display:block;'>📡 RADAR DE ANTENA ATIVO E RODANDO</span>
+                    <div class="ativo-grande">{ativo}</div>
+                    <span class="radar-text">🔍 Mapeando Estratégia: {st.session_state["ESTRATEGIA"]} | M{st.session_state["TIMEFRAME"]}</span>
                 </div>
             """, unsafe_allow_html=True)
             
             data = get_data_v2(ticker, st.session_state["TIMEFRAME"])
             if data and len(data["close"]) > 0:
-                st.session_state["GRAFICO_DATA"] = list(data["close"][-20:])
-                grafico_placeholder.area_chart(st.session_state["GRAFICO_DATA"], use_container_width=True)
-                
                 sinal = analisar_estrategia(data, st.session_state["ESTRATEGIA"])
                 if sinal:
                     h_ent = datetime.now(FUSO).strftime('%H:%M')
@@ -441,6 +458,6 @@ else:
                     st.session_state["AG_RESULTADO"] = True
                     st.rerun()
             
-            time.sleep(0.8)
+            time.sleep(1.2) # Intervalo do Alerta com antecedência
         
         st.rerun()
