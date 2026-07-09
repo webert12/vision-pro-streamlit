@@ -97,8 +97,8 @@ if "MOSTRAR_HISTORICO" not in st.session_state:
     st.session_state["MOSTRAR_HISTORICO"] = False
 if "PRECOS_GRAFICO" not in st.session_state:
     st.session_state["PRECOS_GRAFICO"] = []
-if "TG_MSG_ID" not in st.session_state:
-    st.session_state["TG_MSG_ID"] = None
+if "PRE_ALERTA" not in st.session_state:
+    st.session_state["PRE_ALERTA"] = None
 
 # Estados de notificações administrativas
 if "ADM_MSG_SUCESSO" not in st.session_state:
@@ -121,27 +121,9 @@ def enviar_telegram(mensagem):
     try:
         url = f"https://api.telegram.org/bot{TOKEN_TELEGRAM}/sendMessage"
         payload = {"chat_id": CHAT_ID_TELEGRAM, "text": mensagem, "parse_mode": "HTML"}
-        req = requests.post(url, json=payload, timeout=10).json()
-        if req.get("ok"):
-            return req["result"]["message_id"]
+        requests.post(url, json=payload, timeout=10)
     except:
         pass
-    return None
-
-def apagar_telegram(msg_id):
-    if msg_id:
-        try:
-            url = f"https://api.telegram.org/bot{TOKEN_TELEGRAM}/deleteMessage"
-            payload = {"chat_id": CHAT_ID_TELEGRAM, "message_id": msg_id}
-            requests.post(url, json=payload, timeout=10)
-        except:
-            pass
-
-def limpar_alerta_tela():
-    st.session_state["SINAL_DISPLAY"] = "📡 Procurando oportunidades nos mercados..."
-    st.session_state["AG_RESULTADO"] = False
-    st.session_state["ATIVO_ATUAL"] = "Analisando..."
-    st.session_state["PRECOS_GRAFICO"] = []
 
 # ================= FUNÇÕES DE BANCO DE DADOS =================
 def db_carregar_usuario(email):
@@ -273,7 +255,7 @@ def get_data_v2(ticker, tf):
 
 def analisar_estrategia(data, estrategia, i=-1):
     c, o, h, l = data["close"], data["open"], data["high"], data["low"]
-    if len(c) < 15: return None
+    if len(c) < 60: return None # Regra de análise rigorosa das últimas 60 velas implementada
     
     if estrategia == "LOGICA_DO_PRECO" or estrategia == "TODAS":
         if c[i] > o[i] and c[i] > h[i-1]: return "CALL"
@@ -369,22 +351,8 @@ else:
         """, unsafe_allow_html=True)
         grafico_placeholder.line_chart(pd.DataFrame([0]*20))
     else:
-        # Se estiver aguardando resultado, mostra o ativo do sinal. Se não, mostra que está analisando silenciosamente (evita piscar a tela).
-        ativo_tela = st.session_state["ATIVO_ATUAL"] if st.session_state["AG_RESULTADO"] else "Analisando Mercado..."
-        
-        scanner_placeholder.markdown(f"""
-            <div class="scanner-box">
-                <div class="radar-pulse"></div>
-                <span style='color:#00ffcc; font-size:16px; font-weight:bold; display:block;'>📡 RADAR DE ANTENA ATIVO E RODANDO</span>
-                <div class="ativo-grande">{ativo_tela}</div>
-                <span class="radar-text">🔍 Filtrando Padrões: {st.session_state["ESTRATEGIA"]} | Timeframe: M{st.session_state["TIMEFRAME"]}</span>
-            </div>
-        """, unsafe_allow_html=True)
-        
-        if len(st.session_state["PRECOS_GRAFICO"]) > 0:
-            grafico_placeholder.line_chart(pd.DataFrame(st.session_state["PRECOS_GRAFICO"][-20:]))
-        else:
-            grafico_placeholder.line_chart(pd.DataFrame([0]*20))
+        # A renderização do visual ativo agora acontece dinamicamente dentro do loop para lidar com a Trava
+        pass
 
     # Painel de Controle de Varredura
     col1, col2 = st.columns(2)
@@ -399,6 +367,7 @@ else:
             st.session_state["SINAL_DISPLAY"] = "Scanner Pausado."
             st.session_state["ATIVO_ATUAL"] = "Pausado"
             st.session_state["PRECOS_GRAFICO"] = []
+            st.session_state["PRE_ALERTA"] = None
             st.rerun()
 
     status_placeholder.info(st.session_state["SINAL_DISPLAY"])
@@ -406,47 +375,28 @@ else:
     # Painel de Resultados Manuais
     if st.session_state["AG_RESULTADO"]:
         st.warning("Aguardando verificação do resultado da operação:")
-        c1, c2, c3, c4 = st.columns(4)
+        c1, c2, c3 = st.columns(3)
         if c1.button("✅ WIN", use_container_width=True, key="btn_win"):
             db_atualizar_ultimo_sinal("Win")
             db_atualizar_estatisticas(st.session_state["USER"], True)
-            apagar_telegram(st.session_state.get("TG_MSG_ID"))
-            st.session_state["TG_MSG_ID"] = None
-            limpar_alerta_tela()
+            st.session_state["AG_RESULTADO"] = False
             st.rerun()
         if c2.button("🔄 GALE 1", use_container_width=True, key="btn_gale"):
             db_atualizar_ultimo_sinal("Win G1")
             db_atualizar_estatisticas(st.session_state["USER"], True)
-            apagar_telegram(st.session_state.get("TG_MSG_ID"))
-            st.session_state["TG_MSG_ID"] = None
-            limpar_alerta_tela()
+            st.session_state["AG_RESULTADO"] = False
             st.rerun()
         if c3.button("❌ RED", use_container_width=True, key="btn_red"):
             db_atualizar_ultimo_sinal("Red")
             db_atualizar_estatisticas(st.session_state["USER"], False)
-            apagar_telegram(st.session_state.get("TG_MSG_ID"))
-            st.session_state["TG_MSG_ID"] = None
-            limpar_alerta_tela()
-            st.rerun()
-        if c4.button("⛔ CANCELAR", use_container_width=True, key="btn_cancel"):
-            db_atualizar_ultimo_sinal("Cancelado")
-            apagar_telegram(st.session_state.get("TG_MSG_ID"))
-            st.session_state["TG_MSG_ID"] = None
-            limpar_alerta_tela()
+            st.session_state["AG_RESULTADO"] = False
             st.rerun()
 
     # Filtros operacionais
     with st.expander("⚙️ Configurações de Ativos e Filtros"):
         st.session_state["MODO_MERCADO"] = st.radio("Mercado Alvo", ["TODOS", "FOREX", "CRIPTO"], key="radio_mercado")
-        
-        # Correção do Bug do Timeframe: Seleciona baseado no valor da sessão
-        opcoes_tf = [1, 5, 15]
-        index_tf = opcoes_tf.index(st.session_state["TIMEFRAME"]) if st.session_state["TIMEFRAME"] in opcoes_tf else 1
-        st.session_state["TIMEFRAME"] = st.selectbox("Timeframe (Minutos)", opcoes_tf, index=index_tf)
-        
-        opcoes_est = ["TODAS", "MHI1", "LOGICA_DO_PRECO", "RSI + MACD + MA", "REVERSÃO / RETRAÇÃO"]
-        index_est = opcoes_est.index(st.session_state["ESTRATEGIA"]) if st.session_state["ESTRATEGIA"] in opcoes_est else 0
-        st.session_state["ESTRATEGIA"] = st.selectbox("Estratégia", opcoes_est, index=index_est)
+        st.session_state["TIMEFRAME"] = st.selectbox("Timeframe (Minutos)", [1, 5, 15], index=1, key="select_tf")
+        st.session_state["ESTRATEGIA"] = st.selectbox("Estratégia", ["TODAS", "MHI1", "LOGICA_DO_PRECO", "RSI + MACD + MA", "REVERSÃO / RETRAÇÃO"], index=0, key="select_est")
 
     # Histórico de Sinais obtidos do Supabase
     st.markdown("---")
@@ -517,46 +467,110 @@ else:
                 else:
                     st.warning("Insira o e-mail do cliente.")
 
-    # ================= LOOP DINÂMICO DE VARREDURA =================
+    # ================= LOOP DINÂMICO DE VARREDURA E TRAVA DE SEGURANÇA =================
     if st.session_state["BOT_ATIVO"] and not st.session_state["AG_RESULTADO"]:
         FUSO = pytz.timezone("America/Sao_Paulo")
-        ativos = ATIVOS_BASE["FOREX"] + ATIVOS_BASE["CRIPTO"] if st.session_state["MODO_MERCADO"] == "TODOS" else ATIVOS_BASE[st.session_state["MODO_MERCADO"]]
         
-        sinal_encontrado = False
-        
-        for ativo in ativos:
-            ticker = MAPA_TICKERS.get(ativo, ativo)
+        # 1. MODO TRAVA DE SEGURANÇA (Se houver um pré-alerta pendente)
+        if st.session_state.get("PRE_ALERTA"):
+            pre = st.session_state["PRE_ALERTA"]
+            ativo = pre["ativo"]
+            ticker = pre["ticker"]
+            sinal_previo = pre["sinal"]
+            minuto_inicial = pre["minuto"]
+            
+            st.session_state["ATIVO_ATUAL"] = ativo
+            agora = datetime.now(FUSO)
+            
+            status_placeholder.warning(f"⚠️ PRÉ-ALERTA (TRAVA DE SEGURANÇA): Possível {sinal_previo} em {ativo}. Aguardando fechamento da vela de M{st.session_state['TIMEFRAME']}...")
+            
             data = get_data_v2(ticker, st.session_state["TIMEFRAME"])
-            
             if data and len(data["close"]) > 0:
-                sinal = analisar_estrategia(data, st.session_state["ESTRATEGIA"])
+                st.session_state["PRECOS_GRAFICO"] = list(data["close"][-20:])
                 
-                if sinal:
-                    # Sinal detectado! Agora sim atualizamos as variáveis para piscar na tela
-                    st.session_state["PRECOS_GRAFICO"] = list(data["close"][-20:])
-                    st.session_state["ATIVO_ATUAL"] = ativo
-                    
-                    h_ent = datetime.now(FUSO).strftime('%H:%M')
-                    h_exp = (datetime.now(FUSO) + timedelta(minutes=st.session_state["TIMEFRAME"])).strftime('%H:%M')
-                    sinal_txt = f"{h_ent} | {h_exp} | {ativo}"
+                scanner_placeholder.markdown(f"""
+                    <div class="scanner-box">
+                        <div class="radar-pulse" style="background:#ffcc00; box-shadow: 0 0 0 0 rgba(255, 204, 0, 0.7);"></div>
+                        <span style='color:#ffcc00; font-size:16px; font-weight:bold; display:block;'>⏳ TRAVA DE SEGURANÇA ATIVADA</span>
+                        <div class="ativo-grande" style="color:#ffcc00;">{ativo}</div>
+                        <span class="radar-text">🔍 Confirmando {sinal_previo} | M{st.session_state["TIMEFRAME"]}</span>
+                    </div>
+                """, unsafe_allow_html=True)
+                grafico_placeholder.line_chart(pd.DataFrame(st.session_state["PRECOS_GRAFICO"]))
+                
+                # Verifica se a vela encerrou calculando o minuto atual no fuso vs timeframe
+                vela_fechou = False
+                if st.session_state["TIMEFRAME"] == 1:
+                    if agora.minute != minuto_inicial: vela_fechou = True
+                else:
+                    if agora.minute != minuto_inicial and agora.minute % st.session_state["TIMEFRAME"] == 0:
+                        vela_fechou = True
+                        
+                if vela_fechou:
+                    # Regra rigorosa: Avalia se no fechamento o sinal ainda se mantém
+                    novo_sinal = analisar_estrategia(data, st.session_state["ESTRATEGIA"])
+                    if novo_sinal == sinal_previo:
+                        h_ent = agora.strftime('%H:%M')
+                        h_exp = (agora + timedelta(minutes=st.session_state["TIMEFRAME"])).strftime('%H:%M')
+                        sinal_txt = f"{h_ent} | {h_exp} | {ativo}"
 
-                    st.session_state["SINAL_DISPLAY"] = f"🎯 **SINAL CONFIRMADO**\n\n**Ativo:** {ativo}\n**Direção:** {sinal}\n**Entrada:** {h_ent}"
-                    db_Salvar_sinal(sinal_txt)
-                    
-                    # Envia para o telegram APENAS se for o Admin
-                    if st.session_state["USER"] == ADMIN_EMAIL:
-                        msg_id = enviar_telegram(f"📺 <b>VISION PLAY TV COMPANY TECNOLOGIC</b>\n\nAssista aos melhores filmes, séries e canais ao vivo sem travamentos!\n🔥 Promoção imperdível válida de 29 de Abril a 2 de Maio!\n\n<i>(Aviso do bot: Oportunidade detectada em {ativo} - {sinal} às {h_ent})</i>")
-                        st.session_state["TG_MSG_ID"] = msg_id # Salva o ID para apagar depois
-                    
-                    st.session_state["AG_RESULTADO"] = True
-                    sinal_encontrado = True
-                    break # Interrompe a varredura para exibir o alerta
+                        st.session_state["SINAL_DISPLAY"] = f"🎯 **SINAL CONFIRMADO PELA TRAVA**\n\n**Ativo:** {ativo}\n**Direção:** {novo_sinal}\n**Entrada:** {h_ent}"
+                        status_placeholder.info(st.session_state["SINAL_DISPLAY"])
+                        
+                        db_Salvar_sinal(sinal_txt)
+                        enviar_telegram(f"📺 <b>VISION PLAY TV COMPANY TECNOLOGIC</b>\n\nAssista aos melhores filmes, séries e canais ao vivo sem travamentos!\n🔥 Promoção imperdível válida de 29 de Abril a 2 de Maio!\n\n<i>(Aviso do bot: Oportunidade confirmada em {ativo} - {novo_sinal} às {h_ent})</i>")
+                        
+                        st.session_state["AG_RESULTADO"] = True
+                        st.session_state["PRE_ALERTA"] = None
+                    else:
+                        st.session_state["SINAL_DISPLAY"] = f"❌ SINAL CANCELADO: O mercado mudou e a estratégia em {ativo} não se confirmou no final da vela."
+                        status_placeholder.error(st.session_state["SINAL_DISPLAY"])
+                        st.session_state["PRE_ALERTA"] = None
+                        time.sleep(2) # Pausa dramática rápida para que você visualize a mudança
             
-            # Pausa mínima para não sobrecarregar a API do Yahoo Finance
-            time.sleep(0.1)
-        
-        # Se não achar sinal, espera 1 segundo antes de reiniciar a busca para não travar a interface
-        if not sinal_encontrado:
             time.sleep(1.0)
+            st.rerun()
+
+        # 2. MODO SCANNER PADRÃO (Se não houver pré-alerta pendente)
+        else:
+            ativos = ATIVOS_BASE["FOREX"] + ATIVOS_BASE["CRIPTO"] if st.session_state["MODO_MERCADO"] == "TODOS" else ATIVOS_BASE[st.session_state["MODO_MERCADO"]]
             
-        st.rerun()
+            for ativo in ativos:
+                if not st.session_state["BOT_ATIVO"] or st.session_state["AG_RESULTADO"] or st.session_state.get("PRE_ALERTA"):
+                    break
+                    
+                st.session_state["ATIVO_ATUAL"] = ativo
+                ticker = MAPA_TICKERS.get(ativo, ativo)
+                
+                status_placeholder.warning(f"⚠️ ATENÇÃO: Analisando volatilidade de pré-entrada em {ativo}...")
+                
+                data = get_data_v2(ticker, st.session_state["TIMEFRAME"])
+                if data and len(data["close"]) > 0:
+                    st.session_state["PRECOS_GRAFICO"] = list(data["close"][-20:])
+                    
+                    scanner_placeholder.markdown(f"""
+                        <div class="scanner-box">
+                            <div class="radar-pulse"></div>
+                            <span style='color:#00ffcc; font-size:16px; font-weight:bold; display:block;'>📡 RADAR DE ANTENA ATIVO E RODANDO</span>
+                            <div class="ativo-grande">{ativo}</div>
+                            <span class="radar-text">🔍 Mapeando Estratégia: {st.session_state["ESTRATEGIA"]} | M{st.session_state["TIMEFRAME"]}</span>
+                        </div>
+                    """, unsafe_allow_html=True)
+                    grafico_placeholder.line_chart(pd.DataFrame(st.session_state["PRECOS_GRAFICO"]))
+                    
+                    sinal = analisar_estrategia(data, st.session_state["ESTRATEGIA"])
+                    if sinal:
+                        agora = datetime.now(FUSO)
+                        # Só ativa o pré-alerta se estivemos DURANTE o andamento da vela, para acionar a trava e aguardar
+                        if agora.minute % st.session_state["TIMEFRAME"] != 0 or st.session_state["TIMEFRAME"] == 1:
+                            st.session_state["PRE_ALERTA"] = {
+                                "ativo": ativo,
+                                "ticker": ticker,
+                                "sinal": sinal,
+                                "minuto": agora.minute
+                            }
+                            break # Encontrou um alerta em andamento, sai do loop de varredura padrão
+                
+                time.sleep(1.0)
+            
+            st.rerun()
