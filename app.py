@@ -100,6 +100,12 @@ if "PRECOS_GRAFICO" not in st.session_state:
 if "TG_MSG_ID" not in st.session_state:
     st.session_state["TG_MSG_ID"] = None
 
+# Variavéis de Trava de Segurança
+if "PRE_ALERTA_ATIVO" not in st.session_state:
+    st.session_state["PRE_ALERTA_ATIVO"] = None
+if "PRE_ALERTA_SINAL" not in st.session_state:
+    st.session_state["PRE_ALERTA_SINAL"] = None
+
 # Estados de notificações administrativas
 if "ADM_MSG_SUCESSO" not in st.session_state:
     st.session_state["ADM_MSG_SUCESSO"] = None
@@ -273,7 +279,8 @@ def get_data_v2(ticker, tf):
 
 def analisar_estrategia(data, estrategia, i=-1):
     c, o, h, l = data["close"], data["open"], data["high"], data["low"]
-    if len(c) < 15: return None
+    # Análise forçada de no mínimo 60 velas antes de alertar
+    if len(c) < 60: return None
     
     if estrategia == "LOGICA_DO_PRECO" or estrategia == "TODAS":
         if c[i] > o[i] and c[i] > h[i-1]: return "CALL"
@@ -369,14 +376,11 @@ else:
         """, unsafe_allow_html=True)
         grafico_placeholder.line_chart(pd.DataFrame([0]*20))
     else:
-        # Se estiver aguardando resultado, mostra o ativo do sinal. Se não, mostra que está analisando silenciosamente (evita piscar a tela).
-        ativo_tela = st.session_state["ATIVO_ATUAL"] if st.session_state["AG_RESULTADO"] else "Analisando Mercado..."
-        
         scanner_placeholder.markdown(f"""
             <div class="scanner-box">
                 <div class="radar-pulse"></div>
                 <span style='color:#00ffcc; font-size:16px; font-weight:bold; display:block;'>📡 RADAR DE ANTENA ATIVO E RODANDO</span>
-                <div class="ativo-grande">{ativo_tela}</div>
+                <div class="ativo-grande">{st.session_state["ATIVO_ATUAL"]}</div>
                 <span class="radar-text">🔍 Filtrando Padrões: {st.session_state["ESTRATEGIA"]} | Timeframe: M{st.session_state["TIMEFRAME"]}</span>
             </div>
         """, unsafe_allow_html=True)
@@ -399,6 +403,8 @@ else:
             st.session_state["SINAL_DISPLAY"] = "Scanner Pausado."
             st.session_state["ATIVO_ATUAL"] = "Pausado"
             st.session_state["PRECOS_GRAFICO"] = []
+            st.session_state["PRE_ALERTA_ATIVO"] = None
+            st.session_state["PRE_ALERTA_SINAL"] = None
             st.rerun()
 
     status_placeholder.info(st.session_state["SINAL_DISPLAY"])
@@ -435,18 +441,18 @@ else:
             limpar_alerta_tela()
             st.rerun()
 
-    # Filtros operacionais
+    # Filtros operacionais (BUG DO TIMEFRAME FIXADO AQUI)
     with st.expander("⚙️ Configurações de Ativos e Filtros"):
-        st.session_state["MODO_MERCADO"] = st.radio("Mercado Alvo", ["TODOS", "FOREX", "CRIPTO"], key="radio_mercado")
+        idx_mercado = ["TODOS", "FOREX", "CRIPTO"].index(st.session_state["MODO_MERCADO"]) if st.session_state["MODO_MERCADO"] in ["TODOS", "FOREX", "CRIPTO"] else 0
+        st.session_state["MODO_MERCADO"] = st.radio("Mercado Alvo", ["TODOS", "FOREX", "CRIPTO"], index=idx_mercado)
         
-        # Correção do Bug do Timeframe: Seleciona baseado no valor da sessão
         opcoes_tf = [1, 5, 15]
-        index_tf = opcoes_tf.index(st.session_state["TIMEFRAME"]) if st.session_state["TIMEFRAME"] in opcoes_tf else 1
-        st.session_state["TIMEFRAME"] = st.selectbox("Timeframe (Minutos)", opcoes_tf, index=index_tf)
+        idx_tf = opcoes_tf.index(st.session_state["TIMEFRAME"]) if st.session_state["TIMEFRAME"] in opcoes_tf else 1
+        st.session_state["TIMEFRAME"] = st.selectbox("Timeframe (Minutos)", opcoes_tf, index=idx_tf)
         
         opcoes_est = ["TODAS", "MHI1", "LOGICA_DO_PRECO", "RSI + MACD + MA", "REVERSÃO / RETRAÇÃO"]
-        index_est = opcoes_est.index(st.session_state["ESTRATEGIA"]) if st.session_state["ESTRATEGIA"] in opcoes_est else 0
-        st.session_state["ESTRATEGIA"] = st.selectbox("Estratégia", opcoes_est, index=index_est)
+        idx_est = opcoes_est.index(st.session_state["ESTRATEGIA"]) if st.session_state["ESTRATEGIA"] in opcoes_est else 0
+        st.session_state["ESTRATEGIA"] = st.selectbox("Estratégia", opcoes_est, index=idx_est)
 
     # Histórico de Sinais obtidos do Supabase
     st.markdown("---")
@@ -517,46 +523,99 @@ else:
                 else:
                     st.warning("Insira o e-mail do cliente.")
 
-    # ================= LOOP DINÂMICO DE VARREDURA =================
+    # ================= LOOP DINÂMICO DE VARREDURA (Trava Integrada) =================
     if st.session_state["BOT_ATIVO"] and not st.session_state["AG_RESULTADO"]:
         FUSO = pytz.timezone("America/Sao_Paulo")
-        ativos = ATIVOS_BASE["FOREX"] + ATIVOS_BASE["CRIPTO"] if st.session_state["MODO_MERCADO"] == "TODOS" else ATIVOS_BASE[st.session_state["MODO_MERCADO"]]
+        agora = datetime.now(FUSO)
+        tf = st.session_state["TIMEFRAME"]
         
-        sinal_encontrado = False
+        # Verifica se estamos no último minuto do timeframe escolhido
+        is_last_minute = (agora.minute % tf) == (tf - 1)
         
-        for ativo in ativos:
-            ticker = MAPA_TICKERS.get(ativo, ativo)
-            data = get_data_v2(ticker, st.session_state["TIMEFRAME"])
-            
-            if data and len(data["close"]) > 0:
-                sinal = analisar_estrategia(data, st.session_state["ESTRATEGIA"])
+        # 1. JANELA DE PRÉ-ALERTA (Avisa com antecedência aos 40s da vela -> Segundo 20 a 54)
+        if is_last_minute and 20 <= agora.second < 55:
+            if st.session_state.get("PRE_ALERTA_ATIVO") is None:
+                ativos = ATIVOS_BASE["FOREX"] + ATIVOS_BASE["CRIPTO"] if st.session_state["MODO_MERCADO"] == "TODOS" else ATIVOS_BASE[st.session_state["MODO_MERCADO"]]
                 
-                if sinal:
-                    # Sinal detectado! Agora sim atualizamos as variáveis para piscar na tela
-                    st.session_state["PRECOS_GRAFICO"] = list(data["close"][-20:])
-                    st.session_state["ATIVO_ATUAL"] = ativo
+                for ativo in ativos:
+                    ticker = MAPA_TICKERS.get(ativo, ativo)
+                    st.session_state["ATIVO_ATUAL"] = f"Analisando {ativo}..."
                     
-                    h_ent = datetime.now(FUSO).strftime('%H:%M')
-                    h_exp = (datetime.now(FUSO) + timedelta(minutes=st.session_state["TIMEFRAME"])).strftime('%H:%M')
-                    sinal_txt = f"{h_ent} | {h_exp} | {ativo}"
-
-                    st.session_state["SINAL_DISPLAY"] = f"🎯 **SINAL CONFIRMADO**\n\n**Ativo:** {ativo}\n**Direção:** {sinal}\n**Entrada:** {h_ent}"
-                    db_Salvar_sinal(sinal_txt)
+                    data = get_data_v2(ticker, tf)
+                    if data and len(data["close"]) >= 60:
+                        sinal = analisar_estrategia(data, st.session_state["ESTRATEGIA"])
+                        if sinal:
+                            st.session_state["PRE_ALERTA_ATIVO"] = ativo
+                            st.session_state["PRE_ALERTA_SINAL"] = sinal
+                            st.session_state["PRECOS_GRAFICO"] = list(data["close"][-20:])
+                            
+                            direcao_txt = "verde>compra" if sinal == "CALL" else "vermelho>venda"
+                            h_ent = (agora + timedelta(minutes=1)).replace(second=0).strftime('%H:%M')
+                            h_exp = (datetime.strptime(h_ent, '%H:%M') + timedelta(minutes=tf)).strftime('%H:%M')
+                            
+                            st.session_state["SINAL_DISPLAY"] = f"⚠️ **PRÉ-ALERTA:** Preparando {ativo}\n**Direção:** {direcao_txt}\n**Entrada:** {h_ent} | **Saída:** {h_exp}\n**Estratégia:** {st.session_state['ESTRATEGIA']}"
+                            st.rerun()
+                            break
+                    time.sleep(0.1)
+                time.sleep(1.0)
+                st.rerun()
+            else:
+                # Se já tem pré-alerta, a tela congela aguardando o final da vela (sem piscar)
+                time.sleep(1.0)
+                st.rerun()
+                
+        # 2. JANELA DE CONFIRMAÇÃO (Faltando exatos 5 segundos -> Segundo 55 a 59)
+        elif is_last_minute and agora.second >= 55:
+            if st.session_state.get("PRE_ALERTA_ATIVO") is not None:
+                ativo = st.session_state["PRE_ALERTA_ATIVO"]
+                sinal_esperado = st.session_state["PRE_ALERTA_SINAL"]
+                ticker = MAPA_TICKERS.get(ativo, ativo)
+                
+                data = get_data_v2(ticker, tf)
+                if data and len(data["close"]) >= 60:
+                    sinal_confirmado = analisar_estrategia(data, st.session_state["ESTRATEGIA"])
                     
-                    # Envia para o telegram APENAS se for o Admin
-                    if st.session_state["USER"] == ADMIN_EMAIL:
-                        msg_id = enviar_telegram(f"📺 <b>VISION PLAY TV COMPANY TECNOLOGIC</b>\n\nAssista aos melhores filmes, séries e canais ao vivo sem travamentos!\n🔥 Promoção imperdível válida de 29 de Abril a 2 de Maio!\n\n<i>(Aviso do bot: Oportunidade detectada em {ativo} - {sinal} às {h_ent})</i>")
-                        st.session_state["TG_MSG_ID"] = msg_id # Salva o ID para apagar depois
-                    
-                    st.session_state["AG_RESULTADO"] = True
-                    sinal_encontrado = True
-                    break # Interrompe a varredura para exibir o alerta
+                    if sinal_confirmado == sinal_esperado:
+                        direcao_txt = "verde>compra" if sinal_confirmado == "CALL" else "vermelho>venda"
+                        h_ent = (agora + timedelta(minutes=1)).replace(second=0).strftime('%H:%M')
+                        h_exp = (datetime.strptime(h_ent, '%H:%M') + timedelta(minutes=tf)).strftime('%H:%M')
+                        sinal_txt = f"{h_ent} | {h_exp} | {ativo}"
+                        
+                        st.session_state["ATIVO_ATUAL"] = ativo
+                        st.session_state["SINAL_DISPLAY"] = f"🎯 **SINAL CONFIRMADO**\n\n**Ativo:** {ativo}\n**Direção:** {direcao_txt}\n**Time:** M{tf}\n**Entrada:** {h_ent} | **Saída:** {h_exp}\n**Estratégia:** {st.session_state['ESTRATEGIA']}"
+                        
+                        db_Salvar_sinal(sinal_txt)
+                        
+                        # Disparo para o Telegram exclusivo do ADMIN
+                        if st.session_state["USER"] == ADMIN_EMAIL:
+                            msg_tel = f"🎯 <b>SINAL CONFIRMADO</b>\n\n📈 Ativo: {ativo}\n🧭 Direção: {direcao_txt}\n🕒 Time: M{tf}\n⚙️ Estratégia: {st.session_state['ESTRATEGIA']}\n📥 Entrada: {h_ent}\n⌛ Saída: {h_exp}"
+                            msg_id = enviar_telegram(msg_tel)
+                            st.session_state["TG_MSG_ID"] = msg_id
+                            
+                        st.session_state["AG_RESULTADO"] = True
+                        st.session_state["PRE_ALERTA_ATIVO"] = None
+                        st.session_state["PRE_ALERTA_SINAL"] = None
+                        st.rerun()
+                    else:
+                        st.session_state["SINAL_DISPLAY"] = f"❌ **ENTRADA CANCELADA em {ativo}:** Análise não confirmada. Voltando a varredura."
+                        st.session_state["PRE_ALERTA_ATIVO"] = None
+                        st.session_state["PRE_ALERTA_SINAL"] = None
+                        time.sleep(3)
+                        st.session_state["SINAL_DISPLAY"] = "📡 Procurando oportunidades nos mercados..."
+                        st.rerun()
+            else:
+                time.sleep(1.0)
+                st.rerun()
+                
+        # 3. MODO DE ESPERA (Fora da janela de análise, o sistema aguarda pacientemente sem piscar)
+        else:
+            if st.session_state.get("PRE_ALERTA_ATIVO") is not None:
+                st.session_state["PRE_ALERTA_ATIVO"] = None
+                st.session_state["PRE_ALERTA_SINAL"] = None
+                
+            st.session_state["ATIVO_ATUAL"] = "Aguardando janela..."
+            st.session_state["SINAL_DISPLAY"] = f"📡 Scanner M{tf} ativo. O pré-alerta inicia aos 40s da vela..."
+            st.session_state["PRECOS_GRAFICO"] = []
             
-            # Pausa mínima para não sobrecarregar a API do Yahoo Finance
-            time.sleep(0.1)
-        
-        # Se não achar sinal, espera 1 segundo antes de reiniciar a busca para não travar a interface
-        if not sinal_encontrado:
             time.sleep(1.0)
-            
-        st.rerun()
+            st.rerun()
