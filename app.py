@@ -441,7 +441,7 @@ else:
             limpar_alerta_tela()
             st.rerun()
 
-    # Filtros operacionais (BUG DO TIMEFRAME FIXADO AQUI)
+    # Filtros operacionais
     with st.expander("⚙️ Configurações de Ativos e Filtros"):
         idx_mercado = ["TODOS", "FOREX", "CRIPTO"].index(st.session_state["MODO_MERCADO"]) if st.session_state["MODO_MERCADO"] in ["TODOS", "FOREX", "CRIPTO"] else 0
         st.session_state["MODO_MERCADO"] = st.radio("Mercado Alvo", ["TODOS", "FOREX", "CRIPTO"], index=idx_mercado)
@@ -454,7 +454,7 @@ else:
         idx_est = opcoes_est.index(st.session_state["ESTRATEGIA"]) if st.session_state["ESTRATEGIA"] in opcoes_est else 0
         st.session_state["ESTRATEGIA"] = st.selectbox("Estratégia", opcoes_est, index=idx_est)
 
-    # Histórico de Sinais obtidos do Supabase
+    # Histórico de Sinais
     st.markdown("---")
     if st.button("📋 Ver Histórico de Sinais", use_container_width=True):
         st.session_state["MOSTRAR_HISTORICO"] = not st.session_state["MOSTRAR_HISTORICO"]
@@ -496,7 +496,7 @@ else:
                             st.session_state["ADM_MSG_SUCESSO"] = f"Usuário {novo_email_adm.strip().lower()} cadastrado com sucesso!"
                             st.session_state["ADM_MSG_ERRO"] = None
                         else:
-                            st.session_state["ADM_MSG_ERRO"] = f"Não foi possível cadastrar. Verifique se o e-mail '{novo_email_adm.strip().lower()}' já existe ou configure o RLS no painel do Supabase."
+                            st.session_state["ADM_MSG_ERRO"] = f"Não foi possível cadastrar. Verifique se o e-mail '{novo_email_adm.strip().lower()}' já existe."
                             st.session_state["ADM_MSG_SUCESSO"] = None
                         st.rerun()
                     else:
@@ -532,7 +532,7 @@ else:
         # Verifica se estamos no último minuto do timeframe escolhido
         is_last_minute = (agora.minute % tf) == (tf - 1)
         
-        # 1. JANELA DE PRÉ-ALERTA (Avisa com antecedência aos 40s da vela -> Segundo 20 a 54)
+        # 1. JANELA DE PRÉ-ALERTA (Segundo 20 a 54)
         if is_last_minute and 20 <= agora.second < 55:
             if st.session_state.get("PRE_ALERTA_ATIVO") is None:
                 ativos = ATIVOS_BASE["FOREX"] + ATIVOS_BASE["CRIPTO"] if st.session_state["MODO_MERCADO"] == "TODOS" else ATIVOS_BASE[st.session_state["MODO_MERCADO"]]
@@ -560,11 +560,10 @@ else:
                 time.sleep(1.0)
                 st.rerun()
             else:
-                # Se já tem pré-alerta, a tela congela aguardando o final da vela (sem piscar)
                 time.sleep(1.0)
                 st.rerun()
                 
-        # 2. JANELA DE CONFIRMAÇÃO (Faltando exatos 5 segundos -> Segundo 55 a 59)
+        # 2. JANELA DE CONFIRMAÇÃO (Segundo 55 a 59)
         elif is_last_minute and agora.second >= 55:
             if st.session_state.get("PRE_ALERTA_ATIVO") is not None:
                 ativo = st.session_state["PRE_ALERTA_ATIVO"]
@@ -586,7 +585,6 @@ else:
                         
                         db_Salvar_sinal(sinal_txt)
                         
-                        # Disparo para o Telegram exclusivo do ADMIN
                         if st.session_state["USER"] == ADMIN_EMAIL:
                             msg_tel = f"🎯 <b>SINAL CONFIRMADO</b>\n\n📈 Ativo: {ativo}\n🧭 Direção: {direcao_txt}\n🕒 Time: M{tf}\n⚙️ Estratégia: {st.session_state['ESTRATEGIA']}\n📥 Entrada: {h_ent}\n⌛ Saída: {h_exp}"
                             msg_id = enviar_telegram(msg_tel)
@@ -597,7 +595,7 @@ else:
                         st.session_state["PRE_ALERTA_SINAL"] = None
                         st.rerun()
                     else:
-                        st.session_state["SINAL_DISPLAY"] = f"❌ **ENTRADA CANCELADA em {ativo}:** Análise não confirmada. Voltando a varredura."
+                        st.session_state["SINAL_DISPLAY"] = f"❌ **ENTRADA CANCELADA em {ativo}:** Análise não confirmada."
                         st.session_state["PRE_ALERTA_ATIVO"] = None
                         st.session_state["PRE_ALERTA_SINAL"] = None
                         time.sleep(3)
@@ -607,7 +605,7 @@ else:
                 time.sleep(1.0)
                 st.rerun()
                 
-        # 3. MODO DE ESPERA (Fora da janela de análise, o sistema aguarda pacientemente sem piscar)
+        # 3. MODO DE ESPERA
         else:
             if st.session_state.get("PRE_ALERTA_ATIVO") is not None:
                 st.session_state["PRE_ALERTA_ATIVO"] = None
